@@ -4,6 +4,10 @@
 
 A secure, client-side wallet application for managing W3C JSON-LD Verifiable Credentials. Built with Next.js and TypeScript.
 
+> **🎨 Development Note**: This application was "vibe coded" - developed through an intuitive, experimental approach focusing on feel and user experience over rigid specifications.
+
+🌐 **Live Demo**: [http://vc-sparql.jeswr.org](http://vc-sparql.jeswr.org)
+
 ## Features
 
 - 🔒 **Secure Local Storage**: All credentials are stored locally in your browser
