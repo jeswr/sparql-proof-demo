@@ -1,23 +1,75 @@
 'use client';
 
-import { useState } from 'react';
-import { Eye, Code, Download, Copy, Check, Shield, Calendar, User, Hash } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Eye, Code, Download, Copy, Check, Shield, Calendar, User, Hash, Database } from 'lucide-react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { VerifiableCredential } from '@/types/credential';
-import { formatCredentialForDisplay, downloadCredential } from '@/utils/credentialUtils';
+import { formatCredentialForDisplay, downloadCredential, convertToTurtle } from '@/utils/credentialUtils';
 
 interface CredentialViewerProps {
   credential: VerifiableCredential | null;
 }
 
 export function CredentialViewer({ credential }: CredentialViewerProps) {
-  const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted');
+  const [viewMode, setViewMode] = useState<'formatted' | 'raw' | 'turtle'>('formatted');
   const [copied, setCopied] = useState(false);
+  const [turtleData, setTurtleData] = useState<string>('');
+  const [turtleLoading, setTurtleLoading] = useState(false);
+  const [turtleError, setTurtleError] = useState<string | null>(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Detect dark mode
+  useEffect(() => {
+    const checkDarkMode = () => {
+      const isDark = document.documentElement.classList.contains('dark') ||
+                    window.matchMedia('(prefers-color-scheme: dark)').matches;
+      setIsDarkMode(isDark);
+    };
+
+    checkDarkMode();
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    return () => observer.disconnect();
+  }, []);
+
+  // Generate Turtle data when credential changes or turtle mode is selected
+  useEffect(() => {
+    if (credential && viewMode === 'turtle' && !turtleData) {
+      setTurtleLoading(true);
+      setTurtleError(null);
+      
+      convertToTurtle(credential)
+        .then(setTurtleData)
+        .catch((error) => {
+          console.error('Failed to convert to Turtle:', error);
+          setTurtleError('Failed to convert credential to Turtle format');
+        })
+        .finally(() => setTurtleLoading(false));
+    }
+  }, [credential, viewMode, turtleData]);
+
+  // Reset turtle data when credential changes
+  useEffect(() => {
+    setTurtleData('');
+    setTurtleError(null);
+  }, [credential]);
 
   const handleCopy = async () => {
     if (!credential) return;
     
     try {
-      await navigator.clipboard.writeText(JSON.stringify(credential, null, 2));
+      let contentToCopy = '';
+      if (viewMode === 'turtle') {
+        contentToCopy = turtleData;
+      } else if (viewMode === 'raw') {
+        contentToCopy = JSON.stringify(credential, null, 2);
+      } else {
+        contentToCopy = JSON.stringify(credential, null, 2);
+      }
+      
+      await navigator.clipboard.writeText(contentToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
@@ -66,7 +118,7 @@ export function CredentialViewer({ credential }: CredentialViewerProps) {
               </button>
               <button
                 onClick={() => setViewMode('raw')}
-                className={`px-3 py-1 text-sm font-medium border-t border-r border-b rounded-r-md ${
+                className={`px-3 py-1 text-sm font-medium border-t border-b ${
                   viewMode === 'raw'
                     ? 'bg-blue-600 text-white border-blue-600'
                     : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'
@@ -74,6 +126,17 @@ export function CredentialViewer({ credential }: CredentialViewerProps) {
               >
                 <Code className="h-3 w-3 inline mr-1" />
                 Raw JSON
+              </button>
+              <button
+                onClick={() => setViewMode('turtle')}
+                className={`px-3 py-1 text-sm font-medium border rounded-r-md ${
+                  viewMode === 'turtle'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'
+                }`}
+              >
+                <Database className="h-3 w-3 inline mr-1" />
+                Turtle RDF
               </button>
             </div>
             
@@ -201,10 +264,20 @@ export function CredentialViewer({ credential }: CredentialViewerProps) {
                 <Hash className="h-4 w-4 mr-2" />
                 Subject
               </h3>
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
-                <pre className="text-xs text-gray-900 dark:text-white font-mono whitespace-pre-wrap break-all">
+              <div className="bg-gray-50 dark:bg-gray-700 rounded-md overflow-hidden">
+                <SyntaxHighlighter
+                  language="json"
+                  style={isDarkMode ? vscDarkPlus : vs}
+                  customStyle={{
+                    margin: 0,
+                    padding: '1rem',
+                    background: 'transparent',
+                    fontSize: '0.75rem'
+                  }}
+                  wrapLongLines={true}
+                >
                   {JSON.stringify(credential.credentialSubject, null, 2)}
-                </pre>
+                </SyntaxHighlighter>
               </div>
             </div>
 
@@ -215,19 +288,100 @@ export function CredentialViewer({ credential }: CredentialViewerProps) {
                   <Shield className="h-4 w-4 mr-2" />
                   Cryptographic Proof
                 </h3>
-                <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
-                  <pre className="text-xs text-gray-900 dark:text-white font-mono whitespace-pre-wrap break-all">
+                <div className="bg-gray-50 dark:bg-gray-700 rounded-md overflow-hidden">
+                  <SyntaxHighlighter
+                    language="json"
+                    style={isDarkMode ? vscDarkPlus : vs}
+                    customStyle={{
+                      margin: 0,
+                      padding: '1rem',
+                      background: 'transparent',
+                      fontSize: '0.75rem'
+                    }}
+                    wrapLongLines={true}
+                  >
                     {JSON.stringify(credential.proof, null, 2)}
-                  </pre>
+                  </SyntaxHighlighter>
                 </div>
               </div>
             )}
           </div>
+        ) : viewMode === 'turtle' ? (
+          <div className="space-y-4">
+            {turtleLoading && (
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-4">
+                <div className="flex items-center space-x-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <span className="text-sm text-blue-700 dark:text-blue-300">
+                    Converting to RDF/Turtle format...
+                  </span>
+                </div>
+              </div>
+            )}
+            
+            {turtleError && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
+                <p className="text-sm text-red-700 dark:text-red-300">{turtleError}</p>
+              </div>
+            )}
+            
+            {turtleData && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-medium text-gray-900 dark:text-white flex items-center">
+                    <Database className="h-4 w-4 mr-2" />
+                    RDF/Turtle Serialization
+                  </h3>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    W3C compliant RDF representation
+                  </span>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-700 rounded-md overflow-hidden">
+                  <SyntaxHighlighter
+                    language="turtle"
+                    style={isDarkMode ? vscDarkPlus : vs}
+                    customStyle={{
+                      margin: 0,
+                      padding: '1rem',
+                      background: 'transparent',
+                      fontSize: '0.75rem',
+                      maxHeight: '24rem',
+                      overflow: 'auto'
+                    }}
+                    wrapLongLines={true}
+                  >
+                    {turtleData}
+                  </SyntaxHighlighter>
+                </div>
+              </div>
+            )}
+            
+            {!turtleLoading && !turtleError && !turtleData && (
+              <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-8 text-center">
+                <Database className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  RDF/Turtle conversion not available
+                </p>
+              </div>
+            )}
+          </div>
         ) : (
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
-            <pre className="text-xs text-gray-900 dark:text-white font-mono whitespace-pre-wrap break-all max-h-96 overflow-y-auto">
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-md overflow-hidden">
+            <SyntaxHighlighter
+              language="json"
+              style={isDarkMode ? vscDarkPlus : vs}
+              customStyle={{
+                margin: 0,
+                padding: '1rem',
+                background: 'transparent',
+                fontSize: '0.75rem',
+                maxHeight: '24rem',
+                overflow: 'auto'
+              }}
+              wrapLongLines={true}
+            >
               {JSON.stringify(credential, null, 2)}
-            </pre>
+            </SyntaxHighlighter>
           </div>
         )}
       </div>

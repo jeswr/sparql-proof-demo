@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Upload, Plus, AlertCircle, Link, Globe } from 'lucide-react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { VerifiableCredential } from '@/types/credential';
 import { parseCredentialFile, CredentialError } from '@/utils/credentialUtils';
 
@@ -17,7 +19,23 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
   const [urlInput, setUrlInput] = useState('');
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Detect dark mode
+  useEffect(() => {
+    const checkDarkMode = () => {
+      const isDark = document.documentElement.classList.contains('dark') ||
+                    window.matchMedia('(prefers-color-scheme: dark)').matches;
+      setIsDarkMode(isDark);
+    };
+
+    checkDarkMode();
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    return () => observer.disconnect();
+  }, []);
 
   // Live test endpoints for demonstration
   const testEndpoints = [
@@ -287,12 +305,51 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
         </div>
       ) : showJsonInput ? (
         <div className="space-y-4">
-          <textarea
-            value={jsonInput}
-            onChange={(e) => setJsonInput(e.target.value)}
-            placeholder="Paste your W3C JSON-LD verifiable credential here..."
-            className="w-full h-48 p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Input Area */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                JSON Input
+              </label>
+              <textarea
+                value={jsonInput}
+                onChange={(e) => setJsonInput(e.target.value)}
+                placeholder="Paste your W3C JSON-LD verifiable credential here..."
+                className="w-full h-48 p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+              />
+            </div>
+            
+            {/* Preview Area */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Preview (with syntax highlighting)
+              </label>
+              <div className="h-48 border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden bg-gray-50 dark:bg-gray-700">
+                {jsonInput.trim() ? (
+                  <SyntaxHighlighter
+                    language="json"
+                    style={isDarkMode ? vscDarkPlus : vs}
+                    customStyle={{
+                      margin: 0,
+                      padding: '0.75rem',
+                      background: 'transparent',
+                      fontSize: '0.875rem',
+                      height: '100%',
+                      overflow: 'auto'
+                    }}
+                    wrapLongLines={true}
+                  >
+                    {jsonInput}
+                  </SyntaxHighlighter>
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 text-sm">
+                    JSON preview will appear here as you type
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          
           <div className="flex space-x-2">
             <button
               onClick={handleJsonSubmit}

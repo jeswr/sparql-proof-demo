@@ -1,7 +1,17 @@
 {
   "@context": [
     "https://www.w3.org/2018/credentials/v1",
-    "https://w3id.org/vaccination/v1"
+    "https://w3id.org/vaccination/v1",
+    {
+      "givenName": "http://schema.org/givenName",
+      "familyName": "http://schema.org/familyName",
+      "birthDate": "http://schema.org/birthDate",
+      "name": "http://schema.org/name",
+      "address": "http://schema.org/address",
+      "code": "http://schema.org/code",
+      "codeSystem": "http://schema.org/codeSystem",
+      "displayName": "http://schema.org/displayName"
+    }
   ],
   "id": "https://example.org/credentials/covid19-vaccination",
   "type": ["VerifiableCredential", "VaccinationCredential"],

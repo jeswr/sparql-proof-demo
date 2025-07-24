@@ -9,8 +9,10 @@ A secure, client-side wallet application for managing W3C JSON-LD Verifiable Cre
 - 📋 **JSON Paste**: Direct paste of credential JSON
 - 🌐 **URL Import**: Fetch credentials directly from web URLs
 - 🚀 **Test Endpoints**: Quick access to live example credentials
-- 👁️ **Rich Viewer**: Formatted and raw JSON viewing modes  
+- 👁️ **Rich Viewer**: Formatted, raw JSON, and RDF/Turtle viewing modes with syntax highlighting
 - 🔍 **Validation**: W3C Verifiable Credential format validation
+- 🐢 **RDF Support**: Convert credentials to Turtle RDF serialization
+- 🎨 **Syntax Highlighting**: Beautiful code highlighting for JSON-LD and Turtle formats
 - 🌙 **Dark Mode**: Full dark mode support
 - 📱 **Responsive**: Works on desktop and mobile devices
 
@@ -43,6 +45,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 ### Managing Credentials
 
 - **View**: Click on any credential in the list to view its details
+- **View Modes**: Switch between Formatted, Raw JSON, and Turtle RDF views with syntax highlighting
 - **Download**: Use the download button to save a credential as a JSON file
 - **Delete**: Use the trash button (click twice to confirm) to remove a credential
 
@@ -68,6 +71,14 @@ This wallet supports [W3C Verifiable Credentials](https://www.w3.org/TR/vc-data-
 - `issuer`: The entity that issued the credential
 - `issuanceDate`: When the credential was issued
 - `credentialSubject`: The claims about the subject
+
+### RDF/Turtle Support
+
+The wallet can convert JSON-LD credentials to RDF Turtle serialization:
+- **Semantic Web Compatible**: Full RDF representation following W3C standards
+- **Linked Data**: Proper use of vocabularies and ontologies
+- **SPARQL Ready**: Output can be used with SPARQL queries and RDF databases
+- **Interoperability**: Standard RDF format for integration with semantic web tools
 
 ## Security
 
