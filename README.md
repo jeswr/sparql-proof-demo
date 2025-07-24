@@ -1,4 +1,16 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# W3C Verifiable Credentials Wallet
+
+A secure, client-side wallet application for managing W3C JSON-LD Verifiable Credentials. Built with Next.js and TypeScript.
+
+## Features
+
+- 🔒 **Secure Local Storage**: All credentials are stored locally in your browser
+- 📁 **Upload & Download**: Support for JSON credential files
+- 📋 **JSON Paste**: Direct paste of credential JSON
+- 👁️ **Rich Viewer**: Formatted and raw JSON viewing modes  
+- 🔍 **Validation**: W3C Verifiable Credential format validation
+- 🌙 **Dark Mode**: Full dark mode support
+- 📱 **Responsive**: Works on desktop and mobile devices
 
 ## Getting Started
 
@@ -14,23 +26,40 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the wallet.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Adding Credentials
 
-## Learn More
+1. **Upload File**: Drag and drop or click to upload a `.json` file containing a W3C Verifiable Credential
+2. **Paste JSON**: Click "Paste JSON" and paste the credential JSON directly
 
-To learn more about Next.js, take a look at the following resources:
+### Managing Credentials
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **View**: Click on any credential in the list to view its details
+- **Download**: Use the download button to save a credential as a JSON file
+- **Delete**: Use the trash button (click twice to confirm) to remove a credential
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Sample Credential
 
-## Deploy on Vercel
+A sample verifiable credential is included at `/public/sample-credential.json` for testing purposes.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## W3C Verifiable Credentials
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This wallet supports [W3C Verifiable Credentials](https://www.w3.org/TR/vc-data-model/) in JSON-LD format. Required fields include:
+
+- `@context`: JSON-LD context
+- `id`: Unique identifier for the credential
+- `type`: Must include "VerifiableCredential"
+- `issuer`: The entity that issued the credential
+- `issuanceDate`: When the credential was issued
+- `credentialSubject`: The claims about the subject
+
+## Security
+
+- All credentials are stored locally in your browser's localStorage
+- No data is transmitted to external servers
+- Client-side validation ensures credential format compliance
+
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
