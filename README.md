@@ -7,6 +7,8 @@ A secure, client-side wallet application for managing W3C JSON-LD Verifiable Cre
 - 🔒 **Secure Local Storage**: All credentials are stored locally in your browser
 - 📁 **Upload & Download**: Support for JSON credential files
 - 📋 **JSON Paste**: Direct paste of credential JSON
+- 🌐 **URL Import**: Fetch credentials directly from web URLs
+- 🚀 **Test Endpoints**: Quick access to live example credentials
 - 👁️ **Rich Viewer**: Formatted and raw JSON viewing modes  
 - 🔍 **Validation**: W3C Verifiable Credential format validation
 - 🌙 **Dark Mode**: Full dark mode support
@@ -32,8 +34,11 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ### Adding Credentials
 
-1. **Upload File**: Drag and drop or click to upload a `.json` file containing a W3C Verifiable Credential
+1. **Upload File**: Drag and drop or click to upload a `.json` or `.jsonld` file containing a W3C Verifiable Credential
 2. **Paste JSON**: Click "Paste JSON" and paste the credential JSON directly
+3. **From URL**: Click "From URL" to fetch credentials from a web endpoint
+   - Enter any URL that returns a W3C Verifiable Credential JSON
+   - Use the "Quick Test Endpoints" for immediate testing with live examples
 
 ### Managing Credentials
 
@@ -41,9 +46,17 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 - **Download**: Use the download button to save a credential as a JSON file
 - **Delete**: Use the trash button (click twice to confirm) to remove a credential
 
-### Sample Credential
+### Sample Credentials
 
-A sample verifiable credential is included at `/public/sample-credential.json` for testing purposes.
+Sample verifiable credentials are included for testing purposes:
+- `/public/sample-credential.json` - University degree credential
+- `/public/sample-permanent-resident.jsonld` - Permanent resident card credential  
+- `/public/sample-vaccination.json` - COVID-19 vaccination certificate
+
+These can be:
+- Downloaded and uploaded as files
+- Accessed via the "Quick Test Endpoints" in the URL import feature
+- Used as templates for creating your own credentials
 
 ## W3C Verifiable Credentials
 

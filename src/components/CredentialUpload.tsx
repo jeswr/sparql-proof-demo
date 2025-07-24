@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Upload, Plus, AlertCircle } from 'lucide-react';
+import { Upload, Plus, AlertCircle, Link, Globe } from 'lucide-react';
 import { VerifiableCredential } from '@/types/credential';
 import { parseCredentialFile, CredentialError } from '@/utils/credentialUtils';
 
@@ -14,8 +14,29 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showJsonInput, setShowJsonInput] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
+  const [urlInput, setUrlInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Live test endpoints for demonstration
+  const testEndpoints = [
+    {
+      name: 'Local Vaccination Credential',
+      url: '/sample-vaccination.json',
+      description: 'COVID-19 vaccination certificate example'
+    },
+    {
+      name: 'Local Degree Credential', 
+      url: '/sample-credential.json',
+      description: 'University degree credential example'
+    },
+    {
+      name: 'Local Resident Card',
+      url: '/sample-permanent-resident.jsonld',
+      description: 'Permanent resident card credential'
+    }
+  ];
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -32,16 +53,19 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
     setIsDragOver(false);
     
     const files = Array.from(e.dataTransfer.files);
-    const jsonFiles = files.filter(file => 
-      file.type === 'application/json' || file.name.endsWith('.json')
+    const credentialFiles = files.filter(file => 
+      file.type === 'application/json' || 
+      file.type === 'application/ld+json' ||
+      file.name.endsWith('.json') || 
+      file.name.endsWith('.jsonld')
     );
     
-    if (jsonFiles.length === 0) {
-      setError('Please drop a valid JSON file');
+    if (credentialFiles.length === 0) {
+      setError('Please drop a valid JSON or JSON-LD file');
       return;
     }
     
-    for (const file of jsonFiles) {
+    for (const file of credentialFiles) {
       await processFile(file);
     }
   };
@@ -104,18 +128,86 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
     }
   };
 
+  const fetchCredentialFromUrl = async (url: string) => {
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json, application/ld+json, */*'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const { validateCredential } = await import('@/utils/credentialUtils');
+      const credential = await validateCredential(data);
+      onCredentialAdded(credential);
+      setUrlInput('');
+      setShowUrlInput(false);
+    } catch (err) {
+      if (err instanceof CredentialError) {
+        setError(`Invalid credential: ${err.message}`);
+      } else if (err instanceof TypeError && err.message.includes('fetch')) {
+        setError('Network error: Unable to fetch from URL. Check CORS settings.');
+      } else {
+        setError(`Failed to fetch credential: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleUrlSubmit = async () => {
+    if (!urlInput.trim()) return;
+    await fetchCredentialFromUrl(urlInput.trim());
+  };
+
+  const handleTestEndpoint = async (url: string) => {
+    await fetchCredentialFromUrl(url);
+  };
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
           Add Credential
         </h2>
-        <button
-          onClick={() => setShowJsonInput(!showJsonInput)}
-          className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-        >
-          {showJsonInput ? 'Upload File' : 'Paste JSON'}
-        </button>
+        <div className="flex space-x-2 text-sm">
+          <button
+            onClick={() => {
+              setShowJsonInput(false);
+              setShowUrlInput(!showUrlInput);
+              setError(null);
+            }}
+            className={`px-3 py-1 rounded ${
+              showUrlInput 
+                ? 'bg-blue-600 text-white' 
+                : 'text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
+            }`}
+          >
+            <Link className="h-3 w-3 inline mr-1" />
+            From URL
+          </button>
+          <button
+            onClick={() => {
+              setShowUrlInput(false);
+              setShowJsonInput(!showJsonInput);
+              setError(null);
+            }}
+            className={`px-3 py-1 rounded ${
+              showJsonInput 
+                ? 'bg-blue-600 text-white' 
+                : 'text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
+            }`}
+          >
+            Paste JSON
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -125,7 +217,75 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
         </div>
       )}
 
-      {showJsonInput ? (
+      {showUrlInput ? (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Credential URL
+            </label>
+            <input
+              type="url"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              placeholder="https://example.com/credential.json"
+              className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          
+          <div className="flex space-x-2">
+            <button
+              onClick={handleUrlSubmit}
+              disabled={!urlInput.trim() || isUploading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{isUploading ? 'Fetching...' : 'Fetch Credential'}</span>
+            </button>
+            <button
+              onClick={() => {
+                setUrlInput('');
+                setShowUrlInput(false);
+                setError(null);
+              }}
+              className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+
+          {/* Test Endpoints */}
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center">
+              <Globe className="h-4 w-4 mr-1" />
+              Quick Test Endpoints
+            </h4>
+            <div className="space-y-2">
+              {testEndpoints.map((endpoint, index) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded border"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                      {endpoint.name}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      {endpoint.description}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleTestEndpoint(endpoint.url)}
+                    disabled={isUploading}
+                    className="ml-2 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isUploading ? 'Loading...' : 'Load'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : showJsonInput ? (
         <div className="space-y-4">
           <textarea
             value={jsonInput}
@@ -146,6 +306,7 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
               onClick={() => {
                 setJsonInput('');
                 setShowJsonInput(false);
+                setShowUrlInput(false);
                 setError(null);
               }}
               className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
@@ -175,10 +336,10 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
                 {isDragOver ? 'Drop your credential file here' : 'Upload credential file'}
               </p>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Drag and drop a JSON file or click to browse
+                Drag and drop a JSON or JSON-LD file or click to browse
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-500">
-                Supports W3C JSON-LD Verifiable Credentials
+                Supports .json and .jsonld files with W3C Verifiable Credentials
               </p>
             </div>
           </div>
@@ -186,7 +347,7 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".json,application/json"
+            accept=".json,.jsonld,application/json,application/ld+json"
             onChange={handleFileSelect}
             multiple
             className="hidden"
