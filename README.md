@@ -1,5 +1,7 @@
 # W3C Verifiable Credentials Wallet
 
+> **⚠️ Note**: This README is AI-generated and has not been vetted by a human. Please verify all information independently.
+
 A secure, client-side wallet application for managing W3C JSON-LD Verifiable Credentials. Built with Next.js and TypeScript.
 
 ## Features
