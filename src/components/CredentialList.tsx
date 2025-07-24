@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { FileText, Trash2, Download, Calendar, User, AlertTriangle } from 'lucide-react';
-import { VerifiableCredential, CredentialDisplay } from '@/types/credential';
+import { VerifiableCredential } from '@/types/credential';
 import { formatCredentialForDisplay, downloadCredential } from '@/utils/credentialUtils';
 
 interface CredentialListProps {

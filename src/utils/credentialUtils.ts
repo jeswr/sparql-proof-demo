@@ -1,9 +1,7 @@
 import { VerifiableCredential, CredentialDisplay } from '@/types/credential';
 import * as jsonld from 'jsonld';
-import { Parser, Writer, Store, DataFactory } from 'n3';
+import { Parser, Writer, Store } from 'n3';
 import { write as prettyTurtle } from '@jeswr/pretty-turtle';
-
-const { namedNode, literal, quad } = DataFactory;
 
 export class CredentialError extends Error {
   constructor(message: string, public code: string) {
@@ -12,45 +10,49 @@ export class CredentialError extends Error {
   }
 }
 
-export const validateCredential = async (credential: any): Promise<VerifiableCredential> => {
+export const validateCredential = async (credential: unknown): Promise<VerifiableCredential> => {
   // Basic structure validation
   if (!credential || typeof credential !== 'object') {
     throw new CredentialError('Invalid credential format', 'INVALID_FORMAT');
   }
 
+  const credentialObj = credential as Record<string, unknown>;
+
   // Check required fields
   const requiredFields = ['@context', 'id', 'type', 'issuer', 'issuanceDate', 'credentialSubject'];
   for (const field of requiredFields) {
-    if (!(field in credential)) {
+    if (!(field in credentialObj)) {
       throw new CredentialError(`Missing required field: ${field}`, 'MISSING_FIELD');
     }
   }
 
   // Validate @context
-  if (!credential['@context'] || 
-      (!Array.isArray(credential['@context']) && typeof credential['@context'] !== 'string')) {
+  const context = credentialObj['@context'];
+  if (!context || 
+      (!Array.isArray(context) && typeof context !== 'string')) {
     throw new CredentialError('Invalid @context format', 'INVALID_CONTEXT');
   }
 
   // Validate type array
-  if (!Array.isArray(credential.type) || !credential.type.includes('VerifiableCredential')) {
+  const type = credentialObj.type;
+  if (!Array.isArray(type) || !type.includes('VerifiableCredential')) {
     throw new CredentialError('Invalid type format or missing VerifiableCredential type', 'INVALID_TYPE');
   }
 
   // Validate dates
   try {
-    new Date(credential.issuanceDate);
-    if (credential.expirationDate) {
-      new Date(credential.expirationDate);
+    new Date(credentialObj.issuanceDate as string);
+    if (credentialObj.expirationDate) {
+      new Date(credentialObj.expirationDate as string);
     }
-  } catch (error) {
+  } catch {
     throw new CredentialError('Invalid date format', 'INVALID_DATE');
   }
 
   return credential as VerifiableCredential;
 };
 
-export const expandCredential = async (credential: VerifiableCredential): Promise<any> => {
+export const expandCredential = async (credential: VerifiableCredential): Promise<unknown> => {
   try {
     return await jsonld.expand(credential);
   } catch (error) {
@@ -59,17 +61,17 @@ export const expandCredential = async (credential: VerifiableCredential): Promis
   }
 };
 
-export const compactCredential = async (expanded: any, context?: any): Promise<VerifiableCredential> => {
+export const compactCredential = async (expanded: unknown, context?: unknown): Promise<VerifiableCredential> => {
   try {
-    const defaultContext = context || [
+    const defaultContext = (context as jsonld.ContextDefinition) || [
       'https://www.w3.org/2018/credentials/v1'
     ];
     
-    const compacted = await jsonld.compact(expanded, defaultContext);
+    const compacted = await jsonld.compact(expanded as jsonld.JsonLdDocument, defaultContext);
     return compacted as VerifiableCredential;
   } catch (error) {
     console.warn('Failed to compact credential with JSON-LD:', error);
-    return expanded;
+    return expanded as VerifiableCredential;
   }
 };
 
@@ -84,9 +86,9 @@ export const formatCredentialForDisplay = (credential: VerifiableCredential): Cr
 
   // Extract a meaningful title from the credential
   let title = 'Verifiable Credential';
-  if (credential.name) {
+  if (credential.name && typeof credential.name === 'string') {
     title = credential.name;
-  } else if (credential.credentialSubject.name) {
+  } else if (credential.credentialSubject.name && typeof credential.credentialSubject.name === 'string') {
     title = credential.credentialSubject.name;
   } else if (credential.type.length > 1) {
     title = credential.type.filter(t => t !== 'VerifiableCredential')[0] || title;
@@ -241,7 +243,7 @@ const createEnhancedTurtle = (credential: VerifiableCredential): string => {
   
   // Determine context-specific prefixes based on credential types and contexts
   let contextPrefixes = '';
-  let contextMappings: { [key: string]: string } = {};
+  const contextMappings: { [key: string]: string } = {};
   
   if (Array.isArray(credential['@context'])) {
     credential['@context'].forEach(ctx => {
@@ -298,7 +300,7 @@ const createEnhancedTurtle = (credential: VerifiableCredential): string => {
   };
 
   // Helper function to serialize complex objects
-  const serializeObject = (obj: any, indent: string = '  '): string => {
+  const serializeObject = (obj: unknown, indent: string = '  '): string => {
     if (obj === null || obj === undefined) return '';
     
     if (typeof obj === 'string') {
@@ -322,7 +324,7 @@ const createEnhancedTurtle = (credential: VerifiableCredential): string => {
     }
     
     if (typeof obj === 'object') {
-      const entries = Object.entries(obj).filter(([key, _]) => key !== 'id' && key !== '@id');
+      const entries = Object.entries(obj as Record<string, unknown>).filter(([key]) => key !== 'id' && key !== '@id');
       if (entries.length === 0) return '';
       
       let result = '[\n';
@@ -372,7 +374,7 @@ ${contextPrefixes}
   turtle += `# Credential Subject
 <${credential.credentialSubject.id || '_:subject'}> `;
 
-  const subjectEntries = Object.entries(credential.credentialSubject).filter(([key, _]) => key !== 'id');
+  const subjectEntries = Object.entries(credential.credentialSubject).filter(([key]) => key !== 'id');
   subjectEntries.forEach(([key, value], index) => {
     const property = mapProperty(key);
     const serializedValue = serializeObject(value);
@@ -445,20 +447,15 @@ export const combinedRDFFromCredentials = async (credentials: VerifiableCredenti
 export const executeSPARQLQuery = async (
   sparqlQuery: string, 
   credentials: VerifiableCredential[]
-): Promise<any[]> => {
+): Promise<Record<string, { type: string; value: string }>[]> => {
   try {
     // For now, return a mock result indicating the feature is under development
     // This will be implemented with proper SPARQL execution once the library issues are resolved
     console.log('SPARQL Query:', sparqlQuery);
     console.log('Credentials to query:', credentials.length);
     
-    // Helper function to safely get nested property
-    const getNestedProperty = (obj: any, path: string): any => {
-      return path.split('.').reduce((current, key) => current?.[key], obj);
-    };
-    
     // Helper function to extract string value from potentially complex objects
-    const extractStringValue = (value: any): string => {
+    const extractStringValue = (value: unknown): string => {
       if (typeof value === 'string') {
         return value;
       }
@@ -466,13 +463,14 @@ export const executeSPARQLQuery = async (
         return String(value);
       }
       if (value && typeof value === 'object') {
+        const obj = value as Record<string, unknown>;
         // Try common string properties
-        if (value.displayName) return value.displayName;
-        if (value.name) return value.name;
-        if (value.title) return value.title;
-        if (value.label) return value.label;
-        if (value.code) return value.code;
-        if (value.value) return extractStringValue(value.value);
+        if (obj.displayName && typeof obj.displayName === 'string') return obj.displayName;
+        if (obj.name && typeof obj.name === 'string') return obj.name;
+        if (obj.title && typeof obj.title === 'string') return obj.title;
+        if (obj.label && typeof obj.label === 'string') return obj.label;
+        if (obj.code && typeof obj.code === 'string') return obj.code;
+        if (obj.value) return extractStringValue(obj.value);
         // Fallback to JSON representation
         return JSON.stringify(value);
       }
@@ -482,20 +480,20 @@ export const executeSPARQLQuery = async (
     // Mock results based on query content for demonstration
     if (sparqlQuery.toLowerCase().includes('givenname') || sparqlQuery.toLowerCase().includes('familyname')) {
       return credentials.map(cred => {
-        const subject = cred.credentialSubject as any;
-        const result: any = {
-          subject: { type: 'uri', value: subject.id || `_:subject-${cred.id}` }
+        const subject = cred.credentialSubject as Record<string, unknown>;
+        const result: Record<string, { type: string; value: string }> = {
+          subject: { type: 'uri', value: subject.id as string || `_:subject-${cred.id}` }
         };
         
         // Only include fields that actually exist
         if (subject.givenName) {
-          result.givenName = { type: 'literal', value: subject.givenName };
+          result.givenName = { type: 'literal', value: subject.givenName as string };
         }
         if (subject.familyName) {
-          result.familyName = { type: 'literal', value: subject.familyName };
+          result.familyName = { type: 'literal', value: subject.familyName as string };
         }
         if (subject.name) {
-          result.fullName = { type: 'literal', value: subject.name };
+          result.fullName = { type: 'literal', value: subject.name as string };
         }
         
         return result;
@@ -504,16 +502,16 @@ export const executeSPARQLQuery = async (
     
     if (sparqlQuery.toLowerCase().includes('birthdate') || sparqlQuery.toLowerCase().includes('adult')) {
       return credentials.map(cred => {
-        const subject = cred.credentialSubject as any;
-        const result: any = {
-          subject: { type: 'uri', value: subject.id || `_:subject-${cred.id}` }
+        const subject = cred.credentialSubject as Record<string, unknown>;
+        const result: Record<string, { type: string; value: string }> = {
+          subject: { type: 'uri', value: subject.id as string || `_:subject-${cred.id}` }
         };
         
         if (subject.birthDate) {
-          result.birthDate = { type: 'literal', value: subject.birthDate };
+          result.birthDate = { type: 'literal', value: subject.birthDate as string };
           
           // Calculate if adult (over 18)
-          const birthDate = new Date(subject.birthDate);
+          const birthDate = new Date(subject.birthDate as string);
           const today = new Date();
           
           // Calculate age properly
@@ -537,11 +535,11 @@ export const executeSPARQLQuery = async (
       return credentials
         .filter(cred => cred.type.some(t => t.toLowerCase().includes('vaccination')))
         .map(cred => {
-          const subject = cred.credentialSubject as any;
-          const result: any = {};
+          const subject = cred.credentialSubject as Record<string, unknown>;
+          const result: Record<string, { type: string; value: string }> = {};
           
           if (subject.id) {
-            result.recipient = { type: 'uri', value: subject.id };
+            result.recipient = { type: 'uri', value: subject.id as string };
           }
           
           // Handle vaccine information - could be string or complex object
@@ -566,7 +564,7 @@ export const executeSPARQLQuery = async (
     
     // Default: return basic credential info
     return credentials.map(cred => {
-      const result: any = {
+      const result: Record<string, { type: string; value: string }> = {
         credential: { type: 'uri', value: cred.id },
         type: { type: 'literal', value: cred.type.filter(t => t !== 'VerifiableCredential').join(', ') || 'VerifiableCredential' },
         issuer: { type: 'uri', value: typeof cred.issuer === 'string' ? cred.issuer : cred.issuer.id },
@@ -574,9 +572,9 @@ export const executeSPARQLQuery = async (
       };
       
       // Add subject information if available
-      const subject = cred.credentialSubject as any;
+      const subject = cred.credentialSubject as Record<string, unknown>;
       if (subject.id) {
-        result.subject = { type: 'uri', value: subject.id };
+        result.subject = { type: 'uri', value: subject.id as string };
       }
       if (subject.givenName) {
         result.givenName = { type: 'literal', value: extractStringValue(subject.givenName) };

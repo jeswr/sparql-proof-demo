@@ -2,12 +2,12 @@ export interface VerifiableCredential {
   '@context': string | string[];
   id: string;
   type: string[];
-  issuer: string | { id: string; [key: string]: any };
+  issuer: string | { id: string; [key: string]: unknown };
   issuanceDate: string;
   expirationDate?: string;
   credentialSubject: {
     id?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
   proof?: {
     type: string;
@@ -16,9 +16,9 @@ export interface VerifiableCredential {
     proofPurpose: string;
     jws?: string;
     proofValue?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface CredentialDisplay {

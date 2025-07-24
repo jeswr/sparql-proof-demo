@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Database, Play, Plus, Code, Eye, AlertCircle, CheckCircle, Copy, Hash } from 'lucide-react';
+import { Database, Play, Plus, Code, AlertCircle, CheckCircle, Copy, Hash } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { VerifiableCredential } from '@/types/credential';
@@ -19,7 +19,7 @@ interface SPARQLQueryInterfaceProps {
 
 export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }: SPARQLQueryInterfaceProps) {
   const [query, setQuery] = useState('');
-  const [queryResults, setQueryResults] = useState<any[]>([]);
+  const [queryResults, setQueryResults] = useState<Record<string, { type: string; value: string }>[]>([]);
   const [rdfData, setRdfData] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -318,7 +318,7 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {queryResults.map((result, index) => (
                   <tr key={index}>
-                    {Object.values(result).map((value: any, cellIndex) => (
+                    {Object.values(result).map((value: { type: string; value: string }, cellIndex) => (
                       <td
                         key={cellIndex}
                         className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white"
