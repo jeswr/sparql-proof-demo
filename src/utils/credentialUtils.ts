@@ -452,40 +452,137 @@ export const executeSPARQLQuery = async (
     console.log('SPARQL Query:', sparqlQuery);
     console.log('Credentials to query:', credentials.length);
     
+    // Helper function to safely get nested property
+    const getNestedProperty = (obj: any, path: string): any => {
+      return path.split('.').reduce((current, key) => current?.[key], obj);
+    };
+    
+    // Helper function to extract string value from potentially complex objects
+    const extractStringValue = (value: any): string => {
+      if (typeof value === 'string') {
+        return value;
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+      }
+      if (value && typeof value === 'object') {
+        // Try common string properties
+        if (value.displayName) return value.displayName;
+        if (value.name) return value.name;
+        if (value.title) return value.title;
+        if (value.label) return value.label;
+        if (value.code) return value.code;
+        if (value.value) return extractStringValue(value.value);
+        // Fallback to JSON representation
+        return JSON.stringify(value);
+      }
+      return String(value);
+    };
+    
     // Mock results based on query content for demonstration
     if (sparqlQuery.toLowerCase().includes('givenname') || sparqlQuery.toLowerCase().includes('familyname')) {
-      return credentials.map(cred => ({
-        subject: { type: 'uri', value: cred.credentialSubject.id || 'unknown' },
-        givenName: { type: 'literal', value: (cred.credentialSubject as any).givenName || 'N/A' },
-        familyName: { type: 'literal', value: (cred.credentialSubject as any).familyName || 'N/A' }
-      }));
+      return credentials.map(cred => {
+        const subject = cred.credentialSubject as any;
+        const result: any = {
+          subject: { type: 'uri', value: subject.id || `_:subject-${cred.id}` }
+        };
+        
+        // Only include fields that actually exist
+        if (subject.givenName) {
+          result.givenName = { type: 'literal', value: subject.givenName };
+        }
+        if (subject.familyName) {
+          result.familyName = { type: 'literal', value: subject.familyName };
+        }
+        if (subject.name) {
+          result.fullName = { type: 'literal', value: subject.name };
+        }
+        
+        return result;
+      }).filter(result => Object.keys(result).length > 1); // Filter out entries with only subject
     }
     
     if (sparqlQuery.toLowerCase().includes('birthdate') || sparqlQuery.toLowerCase().includes('adult')) {
-      return credentials.map(cred => ({
-        subject: { type: 'uri', value: cred.credentialSubject.id || 'unknown' },
-        birthDate: { type: 'literal', value: (cred.credentialSubject as any).birthDate || 'N/A' },
-        isAdult: { type: 'literal', value: 'true' } // Mock calculation
-      }));
+      return credentials.map(cred => {
+        const subject = cred.credentialSubject as any;
+        const result: any = {
+          subject: { type: 'uri', value: subject.id || `_:subject-${cred.id}` }
+        };
+        
+        if (subject.birthDate) {
+          result.birthDate = { type: 'literal', value: subject.birthDate };
+          
+          // Calculate if adult (over 18)
+          const birthDate = new Date(subject.birthDate);
+          const today = new Date();
+          const age = today.getFullYear() - birthDate.getFullYear();
+          const hasHadBirthday = today >= new Date(birthDate.setFullYear(today.getFullYear()));
+          const finalAge = hasHadBirthday ? age : age - 1;
+          
+          result.isAdult = { type: 'literal', value: finalAge >= 18 ? 'true' : 'false' };
+        }
+        
+        return result;
+      }).filter(result => Object.keys(result).length > 1);
     }
     
     if (sparqlQuery.toLowerCase().includes('vaccination')) {
       return credentials
         .filter(cred => cred.type.some(t => t.toLowerCase().includes('vaccination')))
-        .map(cred => ({
-          recipient: { type: 'uri', value: cred.credentialSubject.id || 'unknown' },
-          vaccine: { type: 'literal', value: (cred.credentialSubject as any).vaccine || 'COVID-19' },
-          date: { type: 'literal', value: cred.issuanceDate }
-        }));
+        .map(cred => {
+          const subject = cred.credentialSubject as any;
+          const result: any = {};
+          
+          if (subject.id) {
+            result.recipient = { type: 'uri', value: subject.id };
+          }
+          
+          // Handle vaccine information - could be string or complex object
+          if (subject.vaccine) {
+            result.vaccine = { type: 'literal', value: extractStringValue(subject.vaccine) };
+          }
+          
+          if (subject.occurrence) {
+            result.date = { type: 'literal', value: extractStringValue(subject.occurrence) };
+          } else if (cred.issuanceDate) {
+            result.date = { type: 'literal', value: cred.issuanceDate };
+          }
+          
+          // Handle location - could be string or object
+          if (subject.location) {
+            result.location = { type: 'literal', value: extractStringValue(subject.location) };
+          }
+          
+          return result;
+        }).filter(result => Object.keys(result).length > 0);
     }
     
     // Default: return basic credential info
-    return credentials.map(cred => ({
-      credential: { type: 'uri', value: cred.id },
-      type: { type: 'literal', value: cred.type.join(', ') },
-      issuer: { type: 'uri', value: typeof cred.issuer === 'string' ? cred.issuer : cred.issuer.id },
-      issued: { type: 'literal', value: cred.issuanceDate }
-    }));
+    return credentials.map(cred => {
+      const result: any = {
+        credential: { type: 'uri', value: cred.id },
+        type: { type: 'literal', value: cred.type.filter(t => t !== 'VerifiableCredential').join(', ') || 'VerifiableCredential' },
+        issuer: { type: 'uri', value: typeof cred.issuer === 'string' ? cred.issuer : cred.issuer.id },
+        issued: { type: 'literal', value: cred.issuanceDate }
+      };
+      
+      // Add subject information if available
+      const subject = cred.credentialSubject as any;
+      if (subject.id) {
+        result.subject = { type: 'uri', value: subject.id };
+      }
+      if (subject.givenName) {
+        result.givenName = { type: 'literal', value: extractStringValue(subject.givenName) };
+      }
+      if (subject.familyName) {
+        result.familyName = { type: 'literal', value: extractStringValue(subject.familyName) };
+      }
+      if (subject.name) {
+        result.name = { type: 'literal', value: extractStringValue(subject.name) };
+      }
+      
+      return result;
+    });
     
   } catch (error) {
     console.error('SPARQL query execution failed:', error);
