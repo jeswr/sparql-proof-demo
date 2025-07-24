@@ -515,11 +515,18 @@ export const executeSPARQLQuery = async (
           // Calculate if adult (over 18)
           const birthDate = new Date(subject.birthDate);
           const today = new Date();
-          const age = today.getFullYear() - birthDate.getFullYear();
-          const hasHadBirthday = today >= new Date(birthDate.setFullYear(today.getFullYear()));
-          const finalAge = hasHadBirthday ? age : age - 1;
           
-          result.isAdult = { type: 'literal', value: finalAge >= 18 ? 'true' : 'false' };
+          // Calculate age properly
+          let age = today.getFullYear() - birthDate.getFullYear();
+          const monthDiff = today.getMonth() - birthDate.getMonth();
+          
+          // If birth month hasn't occurred this year, or it's the birth month but birth day hasn't occurred
+          if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+            age--;
+          }
+          
+          result.isAdult = { type: 'literal', value: age >= 18 ? 'true' : 'false' };
+          result.age = { type: 'literal', value: age.toString() };
         }
         
         return result;
