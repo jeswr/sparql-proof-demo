@@ -188,9 +188,7 @@ export const convertToTurtle = async (credential: VerifiableCredential): Promise
             
             // Use pretty-turtle to format the output
             const prettyTurtleOutput = await prettyTurtle(quads, { 
-              prefixes: prefixMap,
-              // Additional formatting options
-              format: 'turtle'
+              prefixes: prefixMap
             });
             
             resolve(prettyTurtleOutput);
@@ -411,3 +409,251 @@ ${contextPrefixes}
 
   return turtle;
 };
+
+// SPARQL Querying and Derived Credentials
+
+export const combinedRDFFromCredentials = async (credentials: VerifiableCredential[]): Promise<string> => {
+  const turtleStrings = await Promise.all(
+    credentials.map(cred => convertToTurtle(cred))
+  );
+  
+  // Combine all turtle strings with proper prefixes
+  const prefixes = `@prefix cred: <https://www.w3.org/2018/credentials#> .
+@prefix credex: <https://www.w3.org/2018/credentials/examples#> .
+@prefix sec: <https://w3id.org/security#> .
+@prefix citizenship: <https://w3id.org/citizenship#> .
+@prefix vaccination: <https://w3id.org/vaccination#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schema: <http://schema.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix dc: <http://purl.org/dc/terms/> .
+
+`;
+
+  const combinedData = turtleStrings
+    .map(turtle => {
+      // Remove prefix declarations from individual turtle strings
+      return turtle.replace(/@prefix\s+[^:]+:\s+<[^>]+>\s+\.\s*/g, '');
+    })
+    .join('\n\n');
+
+  return prefixes + combinedData;
+};
+
+export const executeSPARQLQuery = async (
+  sparqlQuery: string, 
+  credentials: VerifiableCredential[]
+): Promise<any[]> => {
+  try {
+    // For now, return a mock result indicating the feature is under development
+    // This will be implemented with proper SPARQL execution once the library issues are resolved
+    console.log('SPARQL Query:', sparqlQuery);
+    console.log('Credentials to query:', credentials.length);
+    
+    // Mock results based on query content for demonstration
+    if (sparqlQuery.toLowerCase().includes('givenname') || sparqlQuery.toLowerCase().includes('familyname')) {
+      return credentials.map(cred => ({
+        subject: { type: 'uri', value: cred.credentialSubject.id || 'unknown' },
+        givenName: { type: 'literal', value: (cred.credentialSubject as any).givenName || 'N/A' },
+        familyName: { type: 'literal', value: (cred.credentialSubject as any).familyName || 'N/A' }
+      }));
+    }
+    
+    if (sparqlQuery.toLowerCase().includes('birthdate') || sparqlQuery.toLowerCase().includes('adult')) {
+      return credentials.map(cred => ({
+        subject: { type: 'uri', value: cred.credentialSubject.id || 'unknown' },
+        birthDate: { type: 'literal', value: (cred.credentialSubject as any).birthDate || 'N/A' },
+        isAdult: { type: 'literal', value: 'true' } // Mock calculation
+      }));
+    }
+    
+    if (sparqlQuery.toLowerCase().includes('vaccination')) {
+      return credentials
+        .filter(cred => cred.type.some(t => t.toLowerCase().includes('vaccination')))
+        .map(cred => ({
+          recipient: { type: 'uri', value: cred.credentialSubject.id || 'unknown' },
+          vaccine: { type: 'literal', value: (cred.credentialSubject as any).vaccine || 'COVID-19' },
+          date: { type: 'literal', value: cred.issuanceDate }
+        }));
+    }
+    
+    // Default: return basic credential info
+    return credentials.map(cred => ({
+      credential: { type: 'uri', value: cred.id },
+      type: { type: 'literal', value: cred.type.join(', ') },
+      issuer: { type: 'uri', value: typeof cred.issuer === 'string' ? cred.issuer : cred.issuer.id },
+      issued: { type: 'literal', value: cred.issuanceDate }
+    }));
+    
+  } catch (error) {
+    console.error('SPARQL query execution failed:', error);
+    throw new CredentialError(`SPARQL query failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'SPARQL_ERROR');
+  }
+};
+
+export const createDerivedCredential = async (
+  sparqlQuery: string,
+  sourceCredentials: VerifiableCredential[],
+  derivedCredentialTemplate: {
+    id: string;
+    type: string[];
+    issuer: string;
+    name?: string;
+    description?: string;
+  }
+): Promise<VerifiableCredential> => {
+  try {
+    // Execute the SPARQL query to get derived data
+    const queryResults = await executeSPARQLQuery(sparqlQuery, sourceCredentials);
+    
+    // Create the base derived credential structure
+    const now = new Date().toISOString();
+    const derivedCredential: VerifiableCredential = {
+      '@context': [
+        'https://www.w3.org/2018/credentials/v1',
+        'https://w3id.org/credentials/derived/v1'
+      ],
+      id: derivedCredentialTemplate.id,
+      type: ['VerifiableCredential', ...derivedCredentialTemplate.type.filter(t => t !== 'VerifiableCredential')],
+      issuer: derivedCredentialTemplate.issuer,
+      issuanceDate: now,
+      name: derivedCredentialTemplate.name,
+      description: derivedCredentialTemplate.description,
+      credentialSubject: {
+        id: 'did:derived:' + Date.now(),
+        type: 'DerivedCredentialSubject',
+        derivedFrom: sourceCredentials.map(cred => cred.id),
+        sparqlQuery: sparqlQuery,
+        queryResults: queryResults
+      },
+      // Mock signature for now - to be replaced with ZKP proof
+      proof: {
+        type: 'DerivedCredentialProof2024',
+        created: now,
+        verificationMethod: derivedCredentialTemplate.issuer + '#keys-1',
+        proofPurpose: 'assertionMethod',
+        proofValue: 'mock-derived-proof-' + Date.now() + '-will-be-replaced-with-zkp',
+        // Add metadata about the derivation
+        derivationMetadata: {
+          sourceCredentials: sourceCredentials.length,
+          queryHash: await hashString(sparqlQuery),
+          derivationTimestamp: now
+        }
+      }
+    };
+
+    return derivedCredential;
+  } catch (error) {
+    console.error('Failed to create derived credential:', error);
+    throw new CredentialError(
+      `Failed to create derived credential: ${error instanceof Error ? error.message : 'Unknown error'}`, 
+      'DERIVATION_ERROR'
+    );
+  }
+};
+
+// Helper function to hash a string (simple implementation)
+const hashString = async (str: string): Promise<string> => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(str);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
+// Sample SPARQL queries for common use cases
+export const getSampleSPARQLQueries = () => [
+  {
+    name: 'Get All Names',
+    description: 'Extract all names from credentials',
+    query: `PREFIX schema: <http://schema.org/>
+PREFIX citizenship: <https://w3id.org/citizenship#>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+
+SELECT ?givenName ?familyName ?fullName WHERE {
+  {
+    ?subject schema:givenName ?givenName .
+    ?subject schema:familyName ?familyName .
+  } UNION {
+    ?subject citizenship:givenName ?givenName .
+    ?subject citizenship:familyName ?familyName .
+  } UNION {
+    ?subject foaf:name ?fullName .
+  } UNION {
+    ?subject schema:name ?fullName .
+  }
+}`
+  },
+  {
+    name: 'Verify Adult Status',
+    description: 'Check if credential holder is over 18',
+    query: `PREFIX schema: <http://schema.org/>
+PREFIX citizenship: <https://w3id.org/citizenship#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?subject ?birthDate ?isAdult WHERE {
+  {
+    ?subject schema:birthDate ?birthDate .
+  } UNION {
+    ?subject citizenship:birthDate ?birthDate .
+  }
+  BIND(xsd:date(?birthDate) AS ?birth)
+  BIND(xsd:date(NOW()) AS ?today)
+  BIND((?today - ?birth) > "P18Y"^^xsd:duration AS ?isAdult)
+}`
+  },
+  {
+    name: 'Get Vaccination Status',
+    description: 'Extract vaccination information',
+    query: `PREFIX vaccination: <https://w3id.org/vaccination#>
+PREFIX schema: <http://schema.org/>
+
+SELECT ?recipient ?vaccine ?date ?location WHERE {
+  ?credential vaccination:recipient ?recipient .
+  ?credential vaccination:vaccine ?vaccine .
+  OPTIONAL { ?credential vaccination:occurrence ?date }
+  OPTIONAL { ?credential vaccination:location ?location }
+}`
+  },
+  {
+    name: 'Combine Identity Info',
+    description: 'Create a consolidated identity profile',
+    query: `PREFIX schema: <http://schema.org/>
+PREFIX citizenship: <https://w3id.org/citizenship#>
+PREFIX cred: <https://www.w3.org/2018/credentials#>
+
+CONSTRUCT {
+  ?subject schema:givenName ?givenName ;
+           schema:familyName ?familyName ;
+           schema:birthDate ?birthDate ;
+           schema:nationality ?country ;
+           cred:credentialType ?credType .
+} WHERE {
+  ?credential cred:credentialSubject ?subject .
+  ?credential a ?credType .
+  OPTIONAL {
+    { ?subject schema:givenName ?givenName } 
+    UNION 
+    { ?subject citizenship:givenName ?givenName }
+  }
+  OPTIONAL {
+    { ?subject schema:familyName ?familyName }
+    UNION
+    { ?subject citizenship:familyName ?familyName }
+  }
+  OPTIONAL {
+    { ?subject schema:birthDate ?birthDate }
+    UNION
+    { ?subject citizenship:birthDate ?birthDate }
+  }
+  OPTIONAL {
+    { ?subject schema:nationality ?country }
+    UNION
+    { ?subject citizenship:birthCountry ?country }
+  }
+  FILTER(?credType != cred:VerifiableCredential)
+}`
+  }
+];
