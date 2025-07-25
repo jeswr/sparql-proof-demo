@@ -11,6 +11,7 @@ import {
   getSampleSPARQLQueries,
   combinedRDFFromCredentials 
 } from '@/utils/credentialUtils';
+import { translate } from 'sparqlalgebrajs';
 
 interface SPARQLQueryInterfaceProps {
   credentials: VerifiableCredential[];
@@ -20,6 +21,7 @@ interface SPARQLQueryInterfaceProps {
 export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }: SPARQLQueryInterfaceProps) {
   const [query, setQuery] = useState('');
   const [queryResults, setQueryResults] = useState<Record<string, { type: string; value: string }>[]>([]);
+  const [queryVariables, setQueryVariables] = useState<string[]>([]);
   const [rdfData, setRdfData] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,10 +113,18 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
     setError(null);
 
     try {
+      // Extract variables from the query for consistent table headers
+      const algebra = translate(query);
+      if (algebra.type === 'project') {
+        const selectVariables = (algebra as { variables: Array<{ value: string }> }).variables.map((variable) => variable.value);
+        setQueryVariables(selectVariables);
+      }
+      
       const results = await executeSPARQLQuery(query, credentials);
       setQueryResults(results);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Query execution failed');
+      setQueryVariables([]);
     } finally {
       setIsExecuting(false);
     }
@@ -123,6 +133,7 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
   const loadSampleQuery = (sampleQuery: string) => {
     setQuery(sampleQuery);
     setQueryResults([]);
+    setQueryVariables([]);
     setError(null);
   };
 
@@ -321,7 +332,7 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
       )}
 
       {/* Query Results */}
-      {queryResults.length > 0 && (
+      {(queryResults.length > 0 || queryVariables.length > 0) && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2">
@@ -330,13 +341,15 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
                 Query Results ({queryResults.length} results)
               </h3>
             </div>
-            <button
-              onClick={() => setShowCreateDerived(!showCreateDerived)}
-              className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 flex items-center space-x-1"
-            >
-              <Plus className="h-3 w-3" />
-              <span>Create Derived Credential</span>
-            </button>
+            {queryResults.length > 0 && (
+              <button
+                onClick={() => setShowCreateDerived(!showCreateDerived)}
+                className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 flex items-center space-x-1"
+              >
+                <Plus className="h-3 w-3" />
+                <span>Create Derived Credential</span>
+              </button>
+            )}
           </div>
 
           {/* Results Table */}
@@ -344,35 +357,49 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  {queryResults.length > 0 && Object.keys(queryResults[0]).map(key => (
+                  {queryVariables.map(variable => (
                     <th
-                      key={key}
+                      key={variable}
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                     >
-                      {key}
+                      {variable}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {queryResults.map((result, index) => (
-                  <tr key={index}>
-                    {Object.values(result).map((value: { type: string; value: string }, cellIndex) => (
-                      <td
-                        key={cellIndex}
-                        className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white"
-                      >
-                        {typeof value === 'object' && value !== null ? (
-                          <span className="font-mono text-xs">
-                            {value.value || JSON.stringify(value)}
-                          </span>
-                        ) : (
-                          String(value)
-                        )}
-                      </td>
-                    ))}
+                {queryResults.length > 0 ? (
+                  queryResults.map((result, index) => (
+                    <tr key={index}>
+                      {queryVariables.map((variable, cellIndex) => {
+                        const value = result[variable];
+                        return (
+                          <td
+                            key={cellIndex}
+                            className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white"
+                          >
+                            {value && typeof value === 'object' && value !== null ? (
+                              <span className="font-mono text-xs">
+                                {value.value || JSON.stringify(value)}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 italic">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td 
+                      colSpan={queryVariables.length} 
+                      className="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400 italic"
+                    >
+                      No results found
+                    </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>

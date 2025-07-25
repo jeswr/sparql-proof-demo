@@ -523,7 +523,7 @@ export const executeSPARQLQuery = async (
     for (const binding of bindings) {
       const result: Record<string, { type: string; value: string }> = {};
       
-      // Extract values for each variable
+      // Extract values for each variable - include all variables even if unbound
       for (const variable of selectVariables) {
         const term = binding.get(variable);
         if (term) {
@@ -536,13 +536,24 @@ export const executeSPARQLQuery = async (
           } else {
             result[variable] = { type: 'literal', value: term.value };
           }
+        } else {
+          // Include unbound variables as empty values to ensure consistent table structure
+          result[variable] = { type: 'literal', value: '' };
         }
       }
       
-      // Only add result if it has at least one binding
-      if (Object.keys(result).length > 0) {
-        results.push(result);
+      // Always add the result even if some variables are unbound
+      results.push(result);
+    }
+    
+    // If we have no results but have SELECT variables, create an empty result structure for table headers
+    if (results.length === 0 && selectVariables.length > 0) {
+      const emptyResult: Record<string, { type: string; value: string }> = {};
+      for (const variable of selectVariables) {
+        emptyResult[variable] = { type: 'literal', value: '' };
       }
+      // Don't add the empty result to the array, but this ensures we have the structure
+      console.log('No results found, but SELECT variables are:', selectVariables);
     }
     
     console.log(`Returning ${results.length} formatted results`);
