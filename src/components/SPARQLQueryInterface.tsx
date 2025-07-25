@@ -617,7 +617,7 @@ The corrected query should now work properly!`,
             SPARQL Query
           </label>
           <div className={`border rounded-md overflow-hidden ${
-            true 
+            isDarkMode 
               ? 'border-gray-600 bg-gray-700' 
               : 'border-gray-300 bg-white'
           }`}>
@@ -1066,7 +1066,7 @@ The corrected query should now work properly!`,
             ) : (
               <Editor
                 height="400px"
-                language="turtle"
+                language="turtle-custom"
                 theme={isDarkMode ? 'turtle-dark' : 'turtle-light'}
                 value={rdfData || '# Loading RDF data...'}
                 options={{
@@ -1111,7 +1111,6 @@ The corrected query should now work properly!`,
                         prefixes: [
                           '@prefix', '@base', 'PREFIX', 'BASE'
                         ],
-                        
                         tokenizer: {
                           root: [
                             [/\ba\b/, 'keyword'],
