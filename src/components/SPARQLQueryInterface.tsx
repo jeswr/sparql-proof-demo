@@ -1,9 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Database, Play, Plus, Code, AlertCircle, CheckCircle, Copy, Hash, MessageCircle, Send, Bot, User, Minimize2, Maximize2, Trash2 } from 'lucide-react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { Database, Play, Plus, Code, AlertCircle, CheckCircle, Copy, Hash, MessageCircle, Send, Bot, User, Minimize2, Trash2 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { VerifiableCredential } from '@/types/credential';
 import { 
@@ -49,7 +47,7 @@ WHERE {
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [monacoEditor, setMonacoEditor] = useState<any>(null);
+  const [monacoEditor, setMonacoEditor] = useState<unknown>(null);
   const [llmConfig, setLlmConfig] = useState<{isConfigured: boolean; provider?: string; error?: string}>({isConfigured: false});
   const [availableSampleQueries, setAvailableSampleQueries] = useState<Array<{name: string; description: string; query: string}>>([]);
   const [sparqlSyntaxError, setSparqlSyntaxError] = useState<string | null>(null);
@@ -107,11 +105,11 @@ WHERE {
       setIsDarkMode(isDark);
       
       // Update Monaco editor theme if editor is available
-      if (monacoEditor) {
+      if (monacoEditor && typeof monacoEditor === 'object' && 'setTheme' in monacoEditor) {
         try {
           // Force theme update with a slight delay to ensure it takes effect
           setTimeout(() => {
-            monacoEditor.setTheme(isDark ? 'sparql-dark' : 'sparql-light');
+            (monacoEditor as { setTheme: (theme: string) => void }).setTheme(isDark ? 'sparql-dark' : 'sparql-light');
           }, 50);
         } catch (error) {
           console.warn('Failed to update Monaco theme:', error);
@@ -396,8 +394,6 @@ WHERE {
     const matches = [...content.matchAll(codeBlockRegex)];
     
     if (matches.length > 0) {
-      const failedQuery = matches[0][1].trim();
-      
       // Generate an autofix message
       const autofixMessage = {
         role: 'assistant' as const,
@@ -504,7 +500,9 @@ The corrected query should now work properly!`,
       if (llmResponse.error) {
         console.warn('LLM API Error (using fallback):', llmResponse.error);
       }
-    } catch (error) {
+    } catch (err) {
+      console.error('Failed to get LLM assistance:', err);
+      
       const errorMessage: ChatMessage = {
         role: 'assistant',
         content: llmConfig.isConfigured 
@@ -872,7 +870,7 @@ The corrected query should now work properly!`,
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
               {llmConfig.isConfigured 
                 ? `Ask me anything about writing SPARQL queries for your credentials! I'm powered by ${llmConfig.provider} AI and can help with syntax, examples, and specific queries.`
-                : "I'm running in fallback mode with basic templates. For full AI assistance, configure an LLM API key (OpenAI or Anthropic)."
+                : `I'm running in fallback mode with basic templates. For full AI assistance, configure an LLM API key (OpenAI or Anthropic).`
               }
             </p>
             {!llmConfig.isConfigured && llmConfig.error && (
@@ -887,7 +885,7 @@ The corrected query should now work properly!`,
             {chatMessages.length === 0 ? (
               <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-4">
                 <Bot className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>Hi! I'm your SPARQL assistant. Ask me anything about querying your credentials!</p>
+                <p>Hi! I&apos;m your SPARQL assistant. Ask me anything about querying your credentials!</p>
                 
                 {/* Suggested Prompts */}
                 <div className="mt-4">
