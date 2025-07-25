@@ -11,16 +11,16 @@
   "credentialSubject": {
     "id": "did:example:b34ca6cd37bbf23",
     "type": ["PermanentResident", "Person"],
-    "http://schema.org/givenName": "JOHN",
-    "http://schema.org/familyName": "SMITH",
-    "http://schema.org/gender": "Male",
-    "http://schema.org/image": "data:image/png;base64,iVBORw0KGgo...kJggg==",
+    "givenName": "JOHN",
+    "familyName": "SMITH",
+    "gender": "Male",
+    "image": "data:image/png;base64,iVBORw0KGgo...kJggg==",
     "residentSince": "2015-01-01",
     "lprCategory": "C09",
     "lprNumber": "999-999-999",
     "commuterClassification": "C1",
-    "http://schema.org/birthPlace": "Bahamas",
-    "http://schema.org/birthDate": "1958-07-17"
+    "birthCountry": "Bahamas",
+    "birthDate": "1958-07-17T00:00:00"
   },
   "proof": {
     "type": "BbsBlsSignature2020",

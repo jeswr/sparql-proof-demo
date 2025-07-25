@@ -494,9 +494,7 @@ export const executeSPARQLQuery = async (
     for (const credential of credentials) {
       try {
         // Convert credential to N-Quads using jsonld
-        const rdfDataset = await jsonld.toRDF(credential, {
-          format: 'application/n-quads'
-        });
+        const rdfDataset = await jsonld.toRDF(credential);
         store.addAll(rdfDataset as RDF.Dataset);
       } catch (error) {
         console.warn(`Failed to convert credential ${credential.id} to RDF:`, error);
@@ -673,6 +671,7 @@ PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 SELECT ?subject ?isAdult WHERE {
   ?subject schema:birthDate|citizenship:birthDate ?birthDate .
   BIND((xsd:date(?birthDate) < xsd:date("${new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}")) AS ?isAdult)
+  FILTER(BOUND(?isAdult) && ?isAdult)
 }`
   },
   {

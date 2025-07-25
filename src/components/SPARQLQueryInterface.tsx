@@ -25,15 +25,10 @@ interface SPARQLQueryInterfaceProps {
 }
 
 export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }: SPARQLQueryInterfaceProps) {
-  const [query, setQuery] = useState(`# Example SPARQL query with syntax highlighting
-PREFIX cred: <https://www.w3.org/2018/credentials#>
-PREFIX schema: <http://schema.org/>
+  const [query, setQuery] = useState(`# Example SPARQL query
 
-SELECT ?name ?type
-WHERE {
-  ?credential a ?type ;
-             cred:credentialSubject ?subject .
-  ?subject schema:name ?name .
+SELECT * WHERE {
+  ?s ?p ?o .
 }`);
   const [queryResults, setQueryResults] = useState<Record<string, { type: string; value: string }>[]>([]);
   const [queryVariables, setQueryVariables] = useState<string[]>([]);
@@ -1065,7 +1060,7 @@ The corrected query should now work properly!`,
               <Editor
                 height="400px"
                 language="turtle-custom"
-                theme={isDarkMode ? 'turtle-dark' : 'turtle-light'}
+                theme={'vs-dark'}
                 value={rdfData || '# Loading RDF data...'}
                 options={{
                   readOnly: true,

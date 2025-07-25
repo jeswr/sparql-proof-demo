@@ -23,13 +23,10 @@
   "expirationDate": "2024-05-15T10:30:00Z",
   "credentialSubject": {
     "id": "did:example:patient123",
-    "type": "VaccinationEvent",
-    "recipient": {
-      "type": "Patient", 
-      "givenName": "Alice",
-      "familyName": "Smith",
-      "birthDate": "1990-03-15"
-    },
+    "type": "Patient", 
+    "givenName": "Alice",
+    "familyName": "Smith",
+    "birthDate": "1990-03-15",
     "vaccine": {
       "type": "Vaccine",
       "code": "208",
