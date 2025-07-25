@@ -14,7 +14,7 @@ A secure, client-side wallet application for managing W3C JSON-LD Verifiable Cre
 - 📁 **Upload & Download**: Support for JSON credential files
 - 📋 **JSON Paste**: Direct paste of credential JSON
 - 🌐 **URL Import**: Fetch credentials directly from web URLs
-- 🚀 **Test Endpoints**: Quick access to live example credentials
+- 🚀 **Test Credentials**: Quick access to live example credentials
 - 👁️ **Rich Viewer**: Formatted, raw JSON, and RDF/Turtle viewing modes with syntax highlighting
 - 🔍 **Validation**: W3C Verifiable Credential format validation
 - 🐢 **RDF Support**: Convert credentials to Turtle RDF serialization
@@ -46,14 +46,14 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 2. **Paste JSON**: Click "Paste JSON" and paste the credential JSON directly
 3. **From URL**: Click "From URL" to fetch credentials from a web endpoint
    - Enter any URL that returns a W3C Verifiable Credential JSON
-   - Use the "Quick Test Endpoints" for immediate testing with live examples
+   - Use the "Quick Test Credentials" for immediate testing with live examples
 
 ### Managing Credentials
 
 - **View**: Click on any credential in the list to view its details
 - **View Modes**: Switch between Formatted, Raw JSON, and Turtle RDF views with syntax highlighting
 - **Download**: Use the download button to save a credential as a JSON file
-- **Delete**: Use the trash button (click twice to confirm) to remove a credential
+- **Delete**: Use the trash button to remove a credential
 
 ### Sample Credentials
 
@@ -64,7 +64,7 @@ Sample verifiable credentials are included for testing purposes:
 
 These can be:
 - Downloaded and uploaded as files
-- Accessed via the "Quick Test Endpoints" in the URL import feature
+- Accessed via the "Quick Test Credentials" in the URL import feature
 - Used as templates for creating your own credentials
 
 ## W3C Verifiable Credentials

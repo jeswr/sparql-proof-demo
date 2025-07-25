@@ -9,9 +9,10 @@ import { parseCredentialFile, CredentialError } from '@/utils/credentialUtils';
 
 interface CredentialUploadProps {
   onCredentialAdded: (credential: VerifiableCredential) => void;
+  existingCredentials?: VerifiableCredential[];
 }
 
-export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
+export function CredentialUpload({ onCredentialAdded, existingCredentials = [] }: CredentialUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,24 +38,32 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
     return () => observer.disconnect();
   }, []);
 
-  // Live test endpoints for demonstration
-  const testEndpoints = [
+  // Live test credentials for demonstration
+  const testCredentials = [
     {
       name: 'Local Vaccination Credential',
       url: '/sample-vaccination.json',
-      description: 'COVID-19 vaccination certificate example'
+      description: 'COVID-19 vaccination certificate example',
+      expectedId: 'https://example.org/credentials/covid19-vaccination'
     },
     {
       name: 'Local Degree Credential', 
       url: '/sample-credential.json',
-      description: 'University degree credential example'
+      description: 'University degree credential example',
+      expectedId: 'http://example.edu/credentials/3732'
     },
     {
       name: 'Local Resident Card',
       url: '/sample-permanent-resident.jsonld',
-      description: 'Permanent resident card credential'
+      description: 'Permanent resident card credential',
+      expectedId: 'https://issuer.oidp.uscis.gov/credentials/83627465'
     }
   ];
+
+  // Filter out test credentials that are already in the wallet
+  const availableTestCredentials = testCredentials.filter(credential => 
+    !existingCredentials.some(existingCredential => existingCredential.id === credential.expectedId)
+  );
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -146,7 +155,7 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
     }
   };
 
-  const fetchCredentialFromUrl = async (url: string) => {
+  const fetchCredentialFromUrl = async (url: string, keepUrlWindowOpen: boolean = false) => {
     setIsUploading(true);
     setError(null);
 
@@ -166,7 +175,9 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
       const credential = await validateCredential(data);
       onCredentialAdded(credential);
       setUrlInput('');
-      setShowUrlInput(false);
+      if (!keepUrlWindowOpen) {
+        setShowUrlInput(false);
+      }
     } catch (err) {
       if (err instanceof CredentialError) {
         setError(`Invalid credential: ${err.message}`);
@@ -182,11 +193,11 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
 
   const handleUrlSubmit = async () => {
     if (!urlInput.trim()) return;
-    await fetchCredentialFromUrl(urlInput.trim());
+    await fetchCredentialFromUrl(urlInput.trim(), false); // Close URL window after manual URL
   };
 
-  const handleTestEndpoint = async (url: string) => {
-    await fetchCredentialFromUrl(url);
+  const handleTestCredential = async (url: string) => {
+    await fetchCredentialFromUrl(url, true); // Keep URL window open
   };
 
   return (
@@ -271,37 +282,39 @@ export function CredentialUpload({ onCredentialAdded }: CredentialUploadProps) {
             </button>
           </div>
 
-          {/* Test Endpoints */}
-          <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center">
-              <Globe className="h-4 w-4 mr-1" />
-              Quick Test Endpoints
-            </h4>
-            <div className="space-y-2">
-              {testEndpoints.map((endpoint, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded border"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                      {endpoint.name}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                      {endpoint.description}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleTestEndpoint(endpoint.url)}
-                    disabled={isUploading}
-                    className="ml-2 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          {/* Test Credentials */}
+          {availableTestCredentials.length > 0 && (
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center">
+                <Globe className="h-4 w-4 mr-1" />
+                Quick Test Credentials
+              </h4>
+              <div className="space-y-2">
+                {availableTestCredentials.map((credential, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded border"
                   >
-                    {isUploading ? 'Loading...' : 'Load'}
-                  </button>
-                </div>
-              ))}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                        {credential.name}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                        {credential.description}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleTestCredential(credential.url)}
+                      disabled={isUploading}
+                      className="ml-2 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isUploading ? 'Loading...' : 'Load'}
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       ) : showJsonInput ? (
         <div className="space-y-4">

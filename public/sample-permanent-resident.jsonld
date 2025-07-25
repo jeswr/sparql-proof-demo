@@ -1,15 +1,7 @@
 {
   "@context": [
     "https://www.w3.org/2018/credentials/v1",
-    "https://w3id.org/citizenship/v1",
-    {
-      "givenName": "http://schema.org/givenName",
-      "familyName": "http://schema.org/familyName",
-      "gender": "http://schema.org/gender",
-      "birthDate": "http://schema.org/birthDate",
-      "image": "http://schema.org/image",
-      "birthCountry": "http://schema.org/birthPlace"
-    }
+    "https://w3id.org/citizenship/v1"
   ],
   "id": "https://issuer.oidp.uscis.gov/credentials/83627465",
   "type": ["VerifiableCredential", "PermanentResidentCard"],
@@ -19,16 +11,16 @@
   "credentialSubject": {
     "id": "did:example:b34ca6cd37bbf23",
     "type": ["PermanentResident", "Person"],
-    "givenName": "JOHN",
-    "familyName": "SMITH",
-    "gender": "Male",
-    "image": "data:image/png;base64,iVBORw0KGgo...kJggg==",
+    "http://schema.org/givenName": "JOHN",
+    "http://schema.org/familyName": "SMITH",
+    "http://schema.org/gender": "Male",
+    "http://schema.org/image": "data:image/png;base64,iVBORw0KGgo...kJggg==",
     "residentSince": "2015-01-01",
     "lprCategory": "C09",
     "lprNumber": "999-999-999",
     "commuterClassification": "C1",
-    "birthCountry": "Bahamas",
-    "birthDate": "1958-07-17"
+    "http://schema.org/birthPlace": "Bahamas",
+    "http://schema.org/birthDate": "1958-07-17"
   },
   "proof": {
     "type": "BbsBlsSignature2020",

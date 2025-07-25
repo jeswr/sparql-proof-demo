@@ -52,6 +52,21 @@ export const validateCredential = async (credential: unknown): Promise<Verifiabl
     throw new CredentialError('Invalid date format', 'INVALID_DATE');
   }
 
+  // Test JSON-LD processing to catch context issues early
+  try {
+    await jsonld.expand(credential as jsonld.JsonLdDocument);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('tried to redefine a protected term')) {
+      throw new CredentialError(
+        'Invalid JSON-LD context: attempt to redefine protected terms. Please check your @context definition.',
+        'INVALID_JSONLD_CONTEXT'
+      );
+    } else if (error instanceof Error) {
+      console.warn('JSON-LD expansion warning:', error.message);
+      // Continue despite expansion issues for now
+    }
+  }
+
   return credential as VerifiableCredential;
 };
 
@@ -479,14 +494,29 @@ export const executeSPARQLQuery = async (
     for (const credential of credentials) {
       try {
         // Convert credential to N-Quads using jsonld
-        store.addAll(await jsonld.toRDF(credential) as RDF.Dataset);
+        const rdfDataset = await jsonld.toRDF(credential, {
+          format: 'application/n-quads'
+        });
+        store.addAll(rdfDataset as RDF.Dataset);
       } catch (error) {
         console.warn(`Failed to convert credential ${credential.id} to RDF:`, error);
+        if (error instanceof Error) {
+          console.warn(`Error details: ${error.message}`);
+          if (error.message.includes('tried to redefine a protected term')) {
+            console.warn(`Credential ${credential.id} has context issues - skipping RDF conversion`);
+          }
+        }
         // Continue with other credentials even if one fails
       }
     }
     
     console.log(`Created RDF store with ${store.size} quads`);
+    
+    // If no credentials could be converted to RDF, return empty results
+    if (store.size === 0) {
+      console.warn('No credentials could be converted to RDF - returning empty results');
+      return [];
+    }
     
     // Execute SPARQL query using Comunica
     const queryEngine = new QueryEngine();

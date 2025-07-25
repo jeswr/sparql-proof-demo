@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { FileText, Trash2, Download, Calendar, User, AlertTriangle } from 'lucide-react';
 import { VerifiableCredential } from '@/types/credential';
 import { formatCredentialForDisplay, downloadCredential } from '@/utils/credentialUtils';
@@ -18,18 +17,10 @@ export function CredentialList({
   onSelectCredential, 
   onDeleteCredential 
 }: CredentialListProps) {
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   const handleDelete = (id: string, event: React.MouseEvent) => {
     event.stopPropagation();
-    if (deleteConfirm === id) {
-      onDeleteCredential(id);
-      setDeleteConfirm(null);
-    } else {
-      setDeleteConfirm(id);
-      // Auto-cancel confirmation after 3 seconds
-      setTimeout(() => setDeleteConfirm(null), 3000);
-    }
+    onDeleteCredential(id);
   };
 
   const handleDownload = (credential: VerifiableCredential, event: React.MouseEvent) => {
@@ -126,12 +117,8 @@ export function CredentialList({
                   
                   <button
                     onClick={(e) => handleDelete(credential.id, e)}
-                    className={`p-1 transition-colors ${
-                      deleteConfirm === credential.id
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-gray-400 hover:text-red-600 dark:hover:text-red-400'
-                    }`}
-                    title={deleteConfirm === credential.id ? 'Click again to confirm' : 'Delete credential'}
+                    className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                    title="Delete credential"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>

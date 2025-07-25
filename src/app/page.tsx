@@ -108,7 +108,10 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Left Column - Credential Management */}
             <div className="space-y-6">
-              <CredentialUpload onCredentialAdded={handleAddCredential} />
+              <CredentialUpload 
+                onCredentialAdded={handleAddCredential} 
+                existingCredentials={credentials}
+              />
               <CredentialList 
                 credentials={credentials}
                 selectedCredential={selectedCredential}
