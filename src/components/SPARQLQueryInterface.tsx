@@ -26,6 +26,7 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
   const [showRDF, setShowRDF] = useState(false);
   const [showCreateDerived, setShowCreateDerived] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [availableSampleQueries, setAvailableSampleQueries] = useState<Array<{name: string; description: string; query: string}>>([]);
   const [derivedCredentialForm, setDerivedCredentialForm] = useState({
     id: '',
     type: 'DerivedCredential',
@@ -34,7 +35,34 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
     description: ''
   });
 
-  const sampleQueries = getSampleSPARQLQueries();
+  // Filter sample queries to only show those that return results
+  useEffect(() => {
+    const filterSampleQueries = async () => {
+      if (credentials.length === 0) {
+        setAvailableSampleQueries([]);
+        return;
+      }
+
+      const allSampleQueries = getSampleSPARQLQueries();
+      const queriesWithResults = [];
+      
+      for (const sampleQuery of allSampleQueries) {
+        try {
+          const results = await executeSPARQLQuery(sampleQuery.query, credentials);
+          if (results.length > 0) {
+            queriesWithResults.push(sampleQuery);
+          }
+        } catch (error) {
+          // Skip queries that fail to execute
+          console.warn(`Sample query "${sampleQuery.name}" failed:`, error);
+        }
+      }
+      
+      setAvailableSampleQueries(queriesWithResults);
+    };
+
+    filterSampleQueries();
+  }, [credentials]);
 
   // Detect dark mode
   useEffect(() => {
@@ -196,22 +224,31 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Sample Queries
           </label>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {sampleQueries.map((sample, index) => (
-              <button
-                key={index}
-                onClick={() => loadSampleQuery(sample.query)}
-                className="text-left p-3 border border-gray-200 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              >
-                <div className="font-medium text-sm text-gray-900 dark:text-white">
-                  {sample.name}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  {sample.description}
-                </div>
-              </button>
-            ))}
-          </div>
+          {availableSampleQueries.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {availableSampleQueries.map((sample: {name: string; description: string; query: string}, index: number) => (
+                <button
+                  key={index}
+                  onClick={() => loadSampleQuery(sample.query)}
+                  className="text-left p-3 border border-gray-200 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                >
+                  <div className="font-medium text-sm text-gray-900 dark:text-white">
+                    {sample.name}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {sample.description}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500 dark:text-gray-400 italic">
+              {credentials.length === 0 
+                ? 'Add some credentials to see sample queries'
+                : 'No sample queries available for your current credentials. Try adding different types of credentials or write your own SPARQL query below.'
+              }
+            </div>
+          )}
         </div>
 
         {/* Query Input */}
