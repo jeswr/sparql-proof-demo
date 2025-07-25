@@ -8,10 +8,12 @@ import { VerifiableCredential } from '@/types/credential';
 import { 
   executeSPARQLQuery, 
   createDerivedCredential, 
-  getSampleSPARQLQueries,
-  combinedRDFFromCredentials 
+  getSampleSPARQLQueries
 } from '@/utils/credentialUtils';
 import { translate } from 'sparqlalgebrajs';
+import * as jsonld from 'jsonld';
+import { Parser, Store } from 'n3';
+import { write as prettyTurtle } from '@jeswr/pretty-turtle';
 
 interface SPARQLQueryInterfaceProps {
   credentials: VerifiableCredential[];
@@ -88,13 +90,83 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
     if (credentials.length > 0) {
       const loadRDF = async () => {
         try {
-          const combined = await combinedRDFFromCredentials(credentials);
-          setRdfData(combined);
+          // Create a combined RDF store from all credentials using JSON-LD and pretty-turtle
+          const store = new Store();
+          
+          // Convert each credential to RDF and add to the store
+          for (const credential of credentials) {
+            try {
+              // Convert credential to N-Quads using jsonld
+              const nquads = await jsonld.toRDF(credential, { format: 'application/n-quads' });
+              
+              // Parse N-Quads and add to store
+              const parser = new Parser({ format: 'N-Quads' });
+              
+              await new Promise<void>((resolve, reject) => {
+                parser.parse(nquads as string, (error, quad) => {
+                  if (error) {
+                    reject(new Error(`Failed to parse RDF for credential ${credential.id}: ${error.message}`));
+                    return;
+                  }
+                  
+                  if (quad) {
+                    store.addQuad(quad);
+                  } else {
+                    // Parsing complete
+                    resolve();
+                  }
+                });
+              });
+            } catch (error) {
+              console.warn(`Failed to convert credential ${credential.id} to RDF:`, error);
+              // Continue with other credentials even if one fails
+            }
+          }
+          
+          // Get all quads from the store, but filter to only include default graph quads
+          const allQuads = store.getQuads(null, null, null, null);
+          // Filter to only include quads in the default graph (where graph is undefined/null)
+          const defaultGraphQuads = allQuads.filter(quad => !quad.graph || quad.graph.value === '');
+          
+          console.log(`Total quads: ${allQuads.length}, Default graph quads: ${defaultGraphQuads.length}`);
+          
+          // Define comprehensive prefix map
+          const prefixMap = {
+            'cred': 'https://www.w3.org/2018/credentials#',
+            'credex': 'https://www.w3.org/2018/credentials/examples#',
+            'sec': 'https://w3id.org/security#',
+            'citizenship': 'https://w3id.org/citizenship#',
+            'vaccination': 'https://w3id.org/vaccination#',
+            'xsd': 'http://www.w3.org/2001/XMLSchema#',
+            'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+            'rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
+            'schema': 'http://schema.org/',
+            'foaf': 'http://xmlns.com/foaf/0.1/',
+            'dc': 'http://purl.org/dc/terms/',
+            'example': 'https://example.org/',
+            'exampleEdu': 'http://example.edu/',
+            'exampleCred': 'https://example.org/credentials/',
+            'exampleEx': 'https://example.org/examples#',
+            'health': 'https://healthauthority.example.org',
+            'did': 'did:example:',
+            'hl7': 'http://hl7.org/fhir/sid/',
+            'cvx': 'http://hl7.org/fhir/sid/cvx'
+          };
+          
+          // Use pretty-turtle to format the output with only default graph quads
+          const prettyTurtleOutput = await prettyTurtle(defaultGraphQuads, { 
+            prefixes: prefixMap
+          });
+          
+          setRdfData(prettyTurtleOutput);
         } catch (error) {
           console.error('Failed to load RDF data:', error);
+          setRdfData('# Error loading RDF data\n# Please check the console for details');
         }
       };
       loadRDF();
+    } else {
+      setRdfData('# No credentials available\n# Please add some credentials to see RDF data');
     }
   }, [credentials]);
 
