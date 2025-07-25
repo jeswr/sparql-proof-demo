@@ -14,7 +14,7 @@ export function WalletHeader() {
                 Verifiable Credentials Wallet
               </h1>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Secure storage for your W3C JSON-LD credentials
+                Demo deriving credentials from SPARQL queries with ZKP proofs
               </p>
             </div>
           </div>
