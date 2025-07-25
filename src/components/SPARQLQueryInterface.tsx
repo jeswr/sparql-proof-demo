@@ -35,7 +35,7 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
     description: ''
   });
 
-  // Filter sample queries to only show those that return results
+  // Filter sample queries to only show those that are valid SELECT queries and return results
   useEffect(() => {
     const filterSampleQueries = async () => {
       if (credentials.length === 0) {
@@ -44,21 +44,23 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
       }
 
       const allSampleQueries = getSampleSPARQLQueries();
-      const queriesWithResults = [];
+      const validQueries = [];
       
       for (const sampleQuery of allSampleQueries) {
         try {
+          // Test that the query can be parsed and returns results
           const results = await executeSPARQLQuery(sampleQuery.query, credentials);
+          // If it doesn't throw an error and returns results, it's valid
           if (results.length > 0) {
-            queriesWithResults.push(sampleQuery);
+            validQueries.push(sampleQuery);
           }
         } catch (error) {
-          // Skip queries that fail to execute
+          // Skip queries that fail to parse or execute
           console.warn(`Sample query "${sampleQuery.name}" failed:`, error);
         }
       }
       
-      setAvailableSampleQueries(queriesWithResults);
+      setAvailableSampleQueries(validQueries);
     };
 
     filterSampleQueries();

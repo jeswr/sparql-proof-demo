@@ -2,6 +2,8 @@ import { VerifiableCredential, CredentialDisplay } from '@/types/credential';
 import * as jsonld from 'jsonld';
 import { Parser, Writer, Store } from 'n3';
 import { write as prettyTurtle } from '@jeswr/pretty-turtle';
+import { translate } from 'sparqlalgebrajs';
+import { QueryEngine } from '@comunica/query-sparql-rdfjs';
 
 export class CredentialError extends Error {
   constructor(message: string, public code: string) {
@@ -449,148 +451,108 @@ export const executeSPARQLQuery = async (
   credentials: VerifiableCredential[]
 ): Promise<Record<string, { type: string; value: string }>[]> => {
   try {
-    // For now, return a mock result indicating the feature is under development
-    // This will be implemented with proper SPARQL execution once the library issues are resolved
     console.log('SPARQL Query:', sparqlQuery);
     console.log('Credentials to query:', credentials.length);
     
-    // Helper function to extract string value from potentially complex objects
-    const extractStringValue = (value: unknown): string => {
-      if (typeof value === 'string') {
-        return value;
-      }
-      if (typeof value === 'number' || typeof value === 'boolean') {
-        return String(value);
-      }
-      if (value && typeof value === 'object') {
-        const obj = value as Record<string, unknown>;
-        // Try common string properties
-        if (obj.displayName && typeof obj.displayName === 'string') return obj.displayName;
-        if (obj.name && typeof obj.name === 'string') return obj.name;
-        if (obj.title && typeof obj.title === 'string') return obj.title;
-        if (obj.label && typeof obj.label === 'string') return obj.label;
-        if (obj.code && typeof obj.code === 'string') return obj.code;
-        if (obj.value) return extractStringValue(obj.value);
-        // Fallback to JSON representation
-        return JSON.stringify(value);
-      }
-      return String(value);
-    };
+    // Parse the SPARQL query using sparqlalgebrajs to validate it's a SELECT query
+    const algebra = translate(sparqlQuery);
     
-    // Mock results based on query content for demonstration
-    if (sparqlQuery.toLowerCase().includes('givenname') || sparqlQuery.toLowerCase().includes('familyname')) {
-      return credentials.map(cred => {
-        const subject = cred.credentialSubject as Record<string, unknown>;
-        const result: Record<string, { type: string; value: string }> = {
-          subject: { type: 'uri', value: subject.id as string || `_:subject-${cred.id}` }
-        };
-        
-        // Only include fields that actually exist
-        if (subject.givenName) {
-          result.givenName = { type: 'literal', value: subject.givenName as string };
-        }
-        if (subject.familyName) {
-          result.familyName = { type: 'literal', value: subject.familyName as string };
-        }
-        if (subject.name) {
-          result.fullName = { type: 'literal', value: subject.name as string };
-        }
-        
-        return result;
-      }).filter(result => Object.keys(result).length > 1); // Filter out entries with only subject
+    // Check if this is a SELECT query
+    if (algebra.type !== 'project') {
+      throw new CredentialError('Only SELECT queries are supported', 'UNSUPPORTED_QUERY_TYPE');
     }
     
-    if (sparqlQuery.toLowerCase().includes('birthdate') || sparqlQuery.toLowerCase().includes('adult')) {
-      return credentials.map(cred => {
-        const subject = cred.credentialSubject as Record<string, unknown>;
-        const result: Record<string, { type: string; value: string }> = {
-          subject: { type: 'uri', value: subject.id as string || `_:subject-${cred.id}` }
-        };
-        
-        if (subject.birthDate) {
-          result.birthDate = { type: 'literal', value: subject.birthDate as string };
-          
-          // Calculate if adult (over 18)
-          const birthDate = new Date(subject.birthDate as string);
-          const today = new Date();
-          
-          // Calculate age properly
-          let age = today.getFullYear() - birthDate.getFullYear();
-          const monthDiff = today.getMonth() - birthDate.getMonth();
-          
-          // If birth month hasn't occurred this year, or it's the birth month but birth day hasn't occurred
-          if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-            age--;
-          }
-          
-          result.isAdult = { type: 'literal', value: age >= 18 ? 'true' : 'false' };
-          result.age = { type: 'literal', value: age.toString() };
-        }
-        
-        return result;
-      }).filter(result => Object.keys(result).length > 1);
+    // Extract the variables from the SELECT clause
+    const selectVariables = (algebra as { variables: Array<{ value: string }> }).variables.map((variable) => variable.value);
+    console.log('SELECT variables:', selectVariables);
+    
+    if (credentials.length === 0) {
+      console.log('No credentials available for querying');
+      return [];
     }
     
-    if (sparqlQuery.toLowerCase().includes('vaccination')) {
-      return credentials
-        .filter(cred => cred.type.some(t => t.toLowerCase().includes('vaccination')))
-        .map(cred => {
-          const subject = cred.credentialSubject as Record<string, unknown>;
-          const result: Record<string, { type: string; value: string }> = {};
-          
-          if (subject.id) {
-            result.recipient = { type: 'uri', value: subject.id as string };
-          }
-          
-          // Handle vaccine information - could be string or complex object
-          if (subject.vaccine) {
-            result.vaccine = { type: 'literal', value: extractStringValue(subject.vaccine) };
-          }
-          
-          if (subject.occurrence) {
-            result.date = { type: 'literal', value: extractStringValue(subject.occurrence) };
-          } else if (cred.issuanceDate) {
-            result.date = { type: 'literal', value: cred.issuanceDate };
-          }
-          
-          // Handle location - could be string or object
-          if (subject.location) {
-            result.location = { type: 'literal', value: extractStringValue(subject.location) };
-          }
-          
-          return result;
-        }).filter(result => Object.keys(result).length > 0);
+    // Create a combined RDF store from all credentials
+    const store = new Store();
+    
+    // Convert each credential to RDF and add to the store
+    for (const credential of credentials) {
+      try {
+        // Convert credential to N-Quads using jsonld
+        const nquads = await jsonld.toRDF(credential, { format: 'application/n-quads' });
+        
+        // Parse N-Quads and add to store
+        const parser = new Parser({ format: 'N-Quads' });
+        
+        await new Promise<void>((resolve, reject) => {
+          parser.parse(nquads as string, (error, quad) => {
+            if (error) {
+              reject(new Error(`Failed to parse RDF for credential ${credential.id}: ${error.message}`));
+              return;
+            }
+            
+            if (quad) {
+              store.addQuad(quad);
+            } else {
+              // Parsing complete
+              resolve();
+            }
+          });
+        });
+      } catch (error) {
+        console.warn(`Failed to convert credential ${credential.id} to RDF:`, error);
+        // Continue with other credentials even if one fails
+      }
     }
     
-    // Default: return basic credential info
-    return credentials.map(cred => {
-      const result: Record<string, { type: string; value: string }> = {
-        credential: { type: 'uri', value: cred.id },
-        type: { type: 'literal', value: cred.type.filter(t => t !== 'VerifiableCredential').join(', ') || 'VerifiableCredential' },
-        issuer: { type: 'uri', value: typeof cred.issuer === 'string' ? cred.issuer : cred.issuer.id },
-        issued: { type: 'literal', value: cred.issuanceDate }
-      };
-      
-      // Add subject information if available
-      const subject = cred.credentialSubject as Record<string, unknown>;
-      if (subject.id) {
-        result.subject = { type: 'uri', value: subject.id as string };
-      }
-      if (subject.givenName) {
-        result.givenName = { type: 'literal', value: extractStringValue(subject.givenName) };
-      }
-      if (subject.familyName) {
-        result.familyName = { type: 'literal', value: extractStringValue(subject.familyName) };
-      }
-      if (subject.name) {
-        result.name = { type: 'literal', value: extractStringValue(subject.name) };
-      }
-      
-      return result;
+    console.log(`Created RDF store with ${store.size} quads`);
+    
+    // Execute SPARQL query using Comunica
+    const queryEngine = new QueryEngine();
+    
+    const bindingsStream = await queryEngine.queryBindings(sparqlQuery, {
+      sources: [store],
     });
+    
+    // Collect all bindings
+    const bindings = await bindingsStream.toArray();
+    console.log(`Query returned ${bindings.length} results`);
+    
+    // Convert bindings to the expected format
+    const results: Record<string, { type: string; value: string }>[] = [];
+    
+    for (const binding of bindings) {
+      const result: Record<string, { type: string; value: string }> = {};
+      
+      // Extract values for each variable
+      for (const variable of selectVariables) {
+        const term = binding.get(variable);
+        if (term) {
+          if (term.termType === 'NamedNode') {
+            result[variable] = { type: 'uri', value: term.value };
+          } else if (term.termType === 'Literal') {
+            result[variable] = { type: 'literal', value: term.value };
+          } else if (term.termType === 'BlankNode') {
+            result[variable] = { type: 'bnode', value: term.value };
+          } else {
+            result[variable] = { type: 'literal', value: term.value };
+          }
+        }
+      }
+      
+      // Only add result if it has at least one binding
+      if (Object.keys(result).length > 0) {
+        results.push(result);
+      }
+    }
+    
+    console.log(`Returning ${results.length} formatted results`);
+    return results;
     
   } catch (error) {
     console.error('SPARQL query execution failed:', error);
+    if (error instanceof CredentialError) {
+      throw error;
+    }
     throw new CredentialError(`SPARQL query failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'SPARQL_ERROR');
   }
 };
@@ -717,45 +679,6 @@ SELECT ?recipient ?vaccine ?date ?location WHERE {
   ?credential vaccination:vaccine ?vaccine .
   OPTIONAL { ?credential vaccination:occurrence ?date }
   OPTIONAL { ?credential vaccination:location ?location }
-}`
-  },
-  {
-    name: 'Combine Identity Info',
-    description: 'Create a consolidated identity profile',
-    query: `PREFIX schema: <http://schema.org/>
-PREFIX citizenship: <https://w3id.org/citizenship#>
-PREFIX cred: <https://www.w3.org/2018/credentials#>
-
-CONSTRUCT {
-  ?subject schema:givenName ?givenName ;
-           schema:familyName ?familyName ;
-           schema:birthDate ?birthDate ;
-           schema:nationality ?country ;
-           cred:credentialType ?credType .
-} WHERE {
-  ?credential cred:credentialSubject ?subject .
-  ?credential a ?credType .
-  OPTIONAL {
-    { ?subject schema:givenName ?givenName } 
-    UNION 
-    { ?subject citizenship:givenName ?givenName }
-  }
-  OPTIONAL {
-    { ?subject schema:familyName ?familyName }
-    UNION
-    { ?subject citizenship:familyName ?familyName }
-  }
-  OPTIONAL {
-    { ?subject schema:birthDate ?birthDate }
-    UNION
-    { ?subject citizenship:birthDate ?birthDate }
-  }
-  OPTIONAL {
-    { ?subject schema:nationality ?country }
-    UNION
-    { ?subject citizenship:birthCountry ?country }
-  }
-  FILTER(?credType != cred:VerifiableCredential)
 }`
   }
 ];
