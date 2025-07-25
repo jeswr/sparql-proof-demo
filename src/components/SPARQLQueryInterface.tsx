@@ -4,12 +4,18 @@ import { useState, useEffect } from 'react';
 import { Database, Play, Plus, Code, AlertCircle, CheckCircle, Copy, Hash, MessageCircle, Send, Bot, User, Minimize2, Maximize2, Trash2 } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import Editor from '@monaco-editor/react';
 import { VerifiableCredential } from '@/types/credential';
 import { 
   executeSPARQLQuery, 
   createDerivedCredential, 
   getSampleSPARQLQueries
 } from '@/utils/credentialUtils';
+import { 
+  callLLMForSPARQLAssistance, 
+  validateLLMConfiguration,
+  type ChatMessage 
+} from '@/utils/llmUtils';
 import { translate } from 'sparqlalgebrajs';
 import * as jsonld from 'jsonld';
 import { Parser, Store } from 'n3';
@@ -21,7 +27,16 @@ interface SPARQLQueryInterfaceProps {
 }
 
 export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }: SPARQLQueryInterfaceProps) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(`# Example SPARQL query with syntax highlighting
+PREFIX cred: <https://www.w3.org/2018/credentials#>
+PREFIX schema: <http://schema.org/>
+
+SELECT ?name ?type
+WHERE {
+  ?credential a ?type ;
+             cred:credentialSubject ?subject .
+  ?subject schema:name ?name .
+}`);
   const [queryResults, setQueryResults] = useState<Record<string, { type: string; value: string }>[]>([]);
   const [queryVariables, setQueryVariables] = useState<string[]>([]);
   const [rdfData, setRdfData] = useState('');
@@ -30,11 +45,15 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
   const [showRDF, setShowRDF] = useState(false);
   const [showCreateDerived, setShowCreateDerived] = useState(false);
   const [showCopilotChat, setShowCopilotChat] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{role: 'user' | 'assistant'; content: string; timestamp: Date}>>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [monacoEditor, setMonacoEditor] = useState<any>(null);
+  const [llmConfig, setLlmConfig] = useState<{isConfigured: boolean; provider?: string; error?: string}>({isConfigured: false});
   const [availableSampleQueries, setAvailableSampleQueries] = useState<Array<{name: string; description: string; query: string}>>([]);
+  const [sparqlSyntaxError, setSparqlSyntaxError] = useState<string | null>(null);
+  const [rdfSyntaxError, setRdfSyntaxError] = useState<string | null>(null);
   const [derivedCredentialForm, setDerivedCredentialForm] = useState({
     id: '',
     type: 'DerivedCredential',
@@ -42,6 +61,12 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
     name: '',
     description: ''
   });
+
+  // Check LLM configuration on mount
+  useEffect(() => {
+    const config = validateLLMConfiguration();
+    setLlmConfig(config);
+  }, []);
 
   // Filter sample queries to only show those that are valid SELECT queries and return results
   useEffect(() => {
@@ -74,20 +99,39 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
     filterSampleQueries();
   }, [credentials]);
 
-  // Detect dark mode
+  // Detect dark mode and update Monaco theme
   useEffect(() => {
     const checkDarkMode = () => {
       const isDark = document.documentElement.classList.contains('dark') ||
                     window.matchMedia('(prefers-color-scheme: dark)').matches;
       setIsDarkMode(isDark);
+      
+      // Update Monaco editor theme if editor is available
+      if (monacoEditor) {
+        try {
+          // Force theme update with a slight delay to ensure it takes effect
+          setTimeout(() => {
+            monacoEditor.setTheme(isDark ? 'sparql-dark' : 'sparql-light');
+          }, 50);
+        } catch (error) {
+          console.warn('Failed to update Monaco theme:', error);
+        }
+      }
     };
 
     checkDarkMode();
     const observer = new MutationObserver(checkDarkMode);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
-    return () => observer.disconnect();
-  }, []);
+    // Also listen for manual theme changes
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    mediaQuery.addEventListener('change', checkDarkMode);
+
+    return () => {
+      observer.disconnect();
+      mediaQuery.removeEventListener('change', checkDarkMode);
+    };
+  }, [monacoEditor]);
 
   // Load combined RDF data when credentials change
   useEffect(() => {
@@ -265,10 +309,9 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
 
-    const userMessage = {
-      role: 'user' as const,
-      content: chatInput.trim(),
-      timestamp: new Date()
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: chatInput.trim()
     };
 
     setChatMessages(prev => [...prev, userMessage]);
@@ -276,189 +319,38 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
     setIsChatLoading(true);
 
     try {
-      // Simulate AI response - in a real implementation, this would call an AI service
-      const response = await generateSPARQLAssistance(userMessage.content, credentials);
+      // Call the actual LLM API for SPARQL assistance
+      const llmResponse = await callLLMForSPARQLAssistance(
+        userMessage.content, 
+        credentials, 
+        rdfData, 
+        chatMessages
+      );
       
-      const assistantMessage = {
-        role: 'assistant' as const,
-        content: response,
-        timestamp: new Date()
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: llmResponse.content
       };
 
       setChatMessages(prev => [...prev, assistantMessage]);
+
+      // Show warning if there was an error but we got a fallback response
+      if (llmResponse.error) {
+        console.warn('LLM API Error (using fallback):', llmResponse.error);
+      }
     } catch (error) {
-      const errorMessage = {
-        role: 'assistant' as const,
-        content: "I'm sorry, I encountered an error while processing your request. Please try again or refer to the sample queries for guidance.",
-        timestamp: new Date()
+      console.error('Failed to get LLM assistance:', error);
+      
+      const errorMessage: ChatMessage = {
+        role: 'assistant',
+        content: llmConfig.isConfigured 
+          ? "I'm sorry, I encountered an error while processing your request. Please try again or refer to the sample queries for guidance."
+          : `I'm currently unavailable because no LLM API key is configured. ${llmConfig.error || ''}\n\nHowever, you can still use the sample queries above or write your own SPARQL queries manually.`
       };
       setChatMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsChatLoading(false);
     }
-  };
-
-  const generateSPARQLAssistance = async (userInput: string, credentials: VerifiableCredential[]): Promise<string> => {
-    // Mock AI assistant responses based on user input patterns
-    const input = userInput.toLowerCase();
-    
-    // Define common prefixes that should be included in all queries
-    const commonPrefixes = `PREFIX cred: <https://www.w3.org/2018/credentials#>
-PREFIX schema: <http://schema.org/>
-PREFIX vaccination: <https://w3id.org/vaccination#>
-PREFIX exampleEx: <https://example.org/examples#>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-PREFIX sec: <https://w3id.org/security#>
-
-`;
-
-    // Include current RDF data context for better suggestions
-    const rdfContext = rdfData ? `\n\n**Current RDF Data Context:**
-Based on your current credentials, I can see the following data structure:
-\`\`\`turtle
-${rdfData.slice(0, 800)}${rdfData.length > 800 ? '...' : ''}
-\`\`\`
-
-This helps me provide more relevant query suggestions based on your actual data.` : '';
-    
-    if (input.includes('help') || input.includes('how') || input.includes('what')) {
-      return `I can help you write SPARQL queries for your ${credentials.length} credential${credentials.length !== 1 ? 's' : ''}! Here are some tips:
-
-**Basic Query Structure with Prefixes:**
-\`\`\`sparql
-${commonPrefixes}SELECT ?variable1 ?variable2
-WHERE {
-  ?subject ?predicate ?object .
-}
-\`\`\`
-
-**Common Prefixes in your data:**
-- \`cred:\` for credential properties (https://www.w3.org/2018/credentials#)
-- \`schema:\` for schema.org properties (http://schema.org/)
-- \`vaccination:\` for vaccination data (https://w3id.org/vaccination#)
-- \`exampleEx:\` for degree/education data (https://example.org/examples#)
-
-**What would you like to query? For example:**
-- "Show me all names"
-- "Find vaccination records" 
-- "Get degree information"
-- "Age verification queries"${rdfContext}`;
-    }
-
-    if (input.includes('name') || input.includes('person')) {
-      return `To query names from your credentials, try:
-
-\`\`\`sparql
-${commonPrefixes}SELECT ?name ?person
-WHERE {
-  ?person schema:name ?name .
-}
-\`\`\`
-
-Or for more specific queries:
-\`\`\`sparql
-${commonPrefixes}SELECT ?givenName ?familyName
-WHERE {
-  ?person schema:givenName ?givenName ;
-          schema:familyName ?familyName .
-}
-\`\`\`${rdfContext}`;
-    }
-
-    if (input.includes('vaccination') || input.includes('vaccine') || input.includes('covid')) {
-      return `For vaccination data, try these queries:
-
-**Basic vaccination info:**
-\`\`\`sparql
-${commonPrefixes}SELECT ?person ?vaccine
-WHERE {
-  ?person a vaccination:VaccinationEvent ;
-          vaccination:VaccineEventVaccine ?vaccineInfo .
-  ?vaccineInfo schema:displayName ?vaccine .
-}
-\`\`\`
-
-**Patient details:**
-\`\`\`sparql
-${commonPrefixes}SELECT ?givenName ?familyName ?birthDate
-WHERE {
-  ?event vaccination:recipient ?recipient .
-  ?recipient schema:givenName ?givenName ;
-            schema:familyName ?familyName ;
-            schema:birthDate ?birthDate .
-}
-\`\`\`${rdfContext}`;
-    }
-
-    if (input.includes('degree') || input.includes('education') || input.includes('university')) {
-      return `For educational credentials, try:
-
-**Degree information:**
-\`\`\`sparql
-${commonPrefixes}SELECT ?name ?degreeName ?school
-WHERE {
-  ?person schema:name ?name ;
-          exampleEx:degree ?degree .
-  ?degree schema:name ?degreeName ;
-          exampleEx:degreeSchool ?school .
-}
-\`\`\`
-
-**University credentials:**
-\`\`\`sparql
-${commonPrefixes}SELECT ?credential ?issuer ?subject
-WHERE {
-  ?credential a exampleEx:UniversityDegreeCredential ;
-             cred:issuer ?issuer ;
-             cred:credentialSubject ?subject .
-}
-\`\`\`${rdfContext}`;
-    }
-
-    if (input.includes('age') || input.includes('birth') || input.includes('over') || input.includes('under')) {
-      return `For age-related queries:
-
-**Birth dates:**
-\`\`\`sparql
-${commonPrefixes}SELECT ?name ?birthDate
-WHERE {
-  ?person schema:name ?name ;
-          schema:birthDate ?birthDate .
-}
-\`\`\`
-
-**Age verification (filtering for people born before 2000):**
-\`\`\`sparql
-${commonPrefixes}SELECT ?name ?birthDate
-WHERE {
-  ?person schema:name ?name ;
-          schema:birthDate ?birthDate .
-  FILTER(?birthDate < "2000-01-01"^^xsd:date)
-}
-\`\`\`${rdfContext}`;
-    }
-
-    // Default response
-    return `I can help you write SPARQL queries! Try asking me about:
-
-🔍 **Query examples:** "How do I query names?" or "Show vaccination data"
-📋 **Specific data:** "Find degree information" or "Get birth dates"  
-🎯 **Filtering:** "Age verification queries" or "Filter by date"
-
-Your credentials contain:
-${credentials.map(c => `- ${c.type ? (Array.isArray(c.type) ? c.type.join(', ') : c.type) : 'Unknown type'}`).join('\n')}
-
-**Sample query with proper prefixes:**
-\`\`\`sparql
-${commonPrefixes}SELECT ?name ?type
-WHERE {
-  ?credential a ?type ;
-             cred:credentialSubject ?subject .
-  ?subject schema:name ?name .
-}
-\`\`\`
-
-What would you like to query?${rdfContext}`;
   };
 
   const applySuggestedQuery = (content: string) => {
@@ -586,30 +478,38 @@ The corrected query should now work properly!`,
   const handleSuggestedPromptClick = async (prompt: string) => {
     setChatInput(prompt);
     // Simulate the message sending process
-    const userMessage = {
-      role: 'user' as const,
-      content: prompt,
-      timestamp: new Date()
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: prompt
     };
 
     setChatMessages(prev => [...prev, userMessage]);
     setIsChatLoading(true);
 
     try {
-      const response = await generateSPARQLAssistance(prompt, credentials);
+      const llmResponse = await callLLMForSPARQLAssistance(
+        prompt, 
+        credentials, 
+        rdfData, 
+        chatMessages
+      );
       
-      const assistantMessage = {
-        role: 'assistant' as const,
-        content: response,
-        timestamp: new Date()
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: llmResponse.content
       };
 
       setChatMessages(prev => [...prev, assistantMessage]);
+
+      if (llmResponse.error) {
+        console.warn('LLM API Error (using fallback):', llmResponse.error);
+      }
     } catch (error) {
-      const errorMessage = {
-        role: 'assistant' as const,
-        content: "I'm sorry, I encountered an error while processing your request. Please try again or refer to the sample queries for guidance.",
-        timestamp: new Date()
+      const errorMessage: ChatMessage = {
+        role: 'assistant',
+        content: llmConfig.isConfigured 
+          ? "I'm sorry, I encountered an error while processing your request. Please try again or refer to the sample queries for guidance."
+          : `I'm currently unavailable because no LLM API key is configured. ${llmConfig.error || ''}\n\nHowever, you can still use the sample queries above or write your own SPARQL queries manually.`
       };
       setChatMessages(prev => [...prev, errorMessage]);
     } finally {
@@ -716,12 +616,197 @@ The corrected query should now work properly!`,
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             SPARQL Query
           </label>
-          <textarea
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Enter your SPARQL query here..."
-            className="w-full h-32 p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-          />
+          <div className={`border rounded-md overflow-hidden ${
+            true 
+              ? 'border-gray-600 bg-gray-700' 
+              : 'border-gray-300 bg-white'
+          }`}>
+            {sparqlSyntaxError ? (
+              // Fallback to a simple textarea if Monaco Editor fails
+              <textarea
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Enter your SPARQL query here..."
+                className="w-full h-48 p-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border-none resize-none focus:outline-none font-mono text-sm"
+                style={{ fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace' }}
+              />
+            ) : (
+              <Editor
+                height="200px"
+                language="sparql"
+                theme={true ? 'sparql-dark' : 'sparql-light'}
+                value={query}
+                onChange={(value) => setQuery(value || '')}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  lineNumbers: 'on',
+                  roundedSelection: false,
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  tabSize: 2,
+                  insertSpaces: true,
+                  wordWrap: 'on',
+                  lineHeight: 20,
+                  fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace',
+                  padding: { top: 10, bottom: 10 },
+                  suggestOnTriggerCharacters: true,
+                  quickSuggestions: true,
+                  folding: true,
+                  foldingHighlight: true,
+                  showFoldingControls: 'always',
+                  renderLineHighlight: 'all',
+                  selectOnLineNumbers: true,
+                  smoothScrolling: true,
+                  cursorBlinking: 'blink',
+                  cursorSmoothCaretAnimation: 'on',
+                  theme: true ? 'vs-dark' : 'vs-light',
+                }}
+                beforeMount={(monaco) => {
+                  try {
+                    // Clear any previous syntax highlighting errors
+                    setSparqlSyntaxError(null);
+                    
+                    // Register SPARQL language if not already registered
+                    if (!monaco.languages.getLanguages().some(lang => lang.id === 'sparql')) {
+                      monaco.languages.register({ id: 'sparql' });
+                      
+                      // Define SPARQL syntax highlighting
+                      monaco.languages.setMonarchTokensProvider('sparql', {
+                        keywords: [
+                          'SELECT', 'DISTINCT', 'WHERE', 'FROM', 'NAMED', 'ORDER', 'BY', 'LIMIT', 'OFFSET',
+                          'CONSTRUCT', 'DESCRIBE', 'ASK', 'INSERT', 'DELETE', 'DATA', 'WITH', 'USING',
+                          'OPTIONAL', 'UNION', 'MINUS', 'GRAPH', 'SERVICE', 'SILENT', 'BIND', 'VALUES',
+                          'FILTER', 'EXISTS', 'NOT', 'AS', 'GROUP', 'HAVING', 'COUNT', 'SUM', 'MIN', 'MAX',
+                          'AVG', 'SAMPLE', 'GROUP_CONCAT', 'SEPARATOR', 'CONCAT', 'STRLEN', 'SUBSTR',
+                          'UCASE', 'LCASE', 'ENCODE_FOR_URI', 'CONTAINS', 'STRSTARTS', 'STRENDS',
+                          'STRBEFORE', 'STRAFTER', 'REPLACE', 'REGEX', 'ABS', 'ROUND', 'CEIL', 'FLOOR',
+                          'RAND', 'NOW', 'YEAR', 'MONTH', 'DAY', 'HOURS', 'MINUTES', 'SECONDS', 'TIMEZONE',
+                          'TZ', 'STR', 'LANG', 'DATATYPE', 'BOUND', 'IRI', 'URI', 'BNODE', 'STRDT', 'STRLANG',
+                          'ISNUMERIC', 'ISBLANK', 'ISIRI', 'ISURI', 'ISLITERAL', 'SAMETERM', 'IN',
+                          'IF', 'COALESCE', 'MD5', 'SHA1', 'SHA256', 'SHA384', 'SHA512', 'UUID', 'STRUUID'
+                        ],
+                        
+                        prefixes: [
+                          'PREFIX', 'BASE'
+                        ],
+
+                        operators: [
+                          '=', '!=', '<', '<=', '>', '>=', '&&', '||', '!', '+', '-', '*', '/', '^'
+                        ],
+
+                        tokenizer: {
+                          root: [
+                            [/[a-zA-Z_][\w]*:/, 'type.identifier'], // Prefixed names
+                            [/@[a-zA-Z_][\w]*/, 'annotation'], // Language tags
+                            [/\?[a-zA-Z_][\w]*/, 'variable'], // Variables
+                            [/\$[a-zA-Z_][\w]*/, 'variable'], // Variables (alternative syntax)
+                            [/"([^"\\]|\\.)*"/, 'string'], // Double quoted strings
+                            [/'([^'\\]|\\.)*'/, 'string'], // Single quoted strings
+                            [/"""[\s\S]*?"""/, 'string'], // Triple quoted strings
+                            [/'''[\s\S]*?'''/, 'string'], // Triple quoted strings (single)
+                            [/<[^>]*>/, 'type'], // IRIs
+                            [/\b\d+(\.\d+)?\b/, 'number'], // Numbers
+                            [/#.*$/, 'comment'], // Comments
+                            [/[{}()\[\]]/, '@brackets'],
+                            [/[;,.]/, 'delimiter'],
+                            [/[a-zA-Z_][\w]*/, {
+                              cases: {
+                                '@keywords': 'keyword',
+                                '@prefixes': 'keyword.prefix',
+                                '@default': 'identifier'
+                              }
+                            }]
+                          ]
+                        }
+                      });
+                    }
+                  } catch (error) {
+                    console.warn('Failed to setup SPARQL syntax highlighting:', error);
+                    setSparqlSyntaxError(`Syntax highlighting unavailable: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                  }
+                }}
+                onMount={(editor, monaco) => {
+                  try {
+                    // Store editor instance for theme updates
+                    setMonacoEditor(monaco.editor);
+                    
+                    // Set the appropriate theme immediately
+                    const currentIsDark = document.documentElement.classList.contains('dark') ||
+                                        window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    
+                    setTimeout(() => {
+                      monaco.editor.setTheme(currentIsDark ? 'sparql-dark' : 'sparql-light');
+                    }, 10);
+                    
+                    // Add SPARQL-specific autocomplete suggestions
+                    monaco.languages.registerCompletionItemProvider('sparql', {
+                      provideCompletionItems: (model, position) => {
+                        const word = model.getWordUntilPosition(position);
+                        const range = {
+                          startLineNumber: position.lineNumber,
+                          endLineNumber: position.lineNumber,
+                          startColumn: word.startColumn,
+                          endColumn: word.endColumn
+                        };
+
+                        const suggestions = [
+                          {
+                            label: 'SELECT',
+                            kind: monaco.languages.CompletionItemKind.Keyword,
+                            insertText: 'SELECT ?variable WHERE {\n  \n}',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range: range
+                          },
+                          {
+                            label: 'PREFIX',
+                            kind: monaco.languages.CompletionItemKind.Keyword,
+                            insertText: 'PREFIX prefix: <uri>',
+                            range: range
+                          },
+                          {
+                            label: 'schema:',
+                            kind: monaco.languages.CompletionItemKind.Module,
+                            insertText: 'schema:',
+                            detail: 'http://schema.org/',
+                            range: range
+                          },
+                          {
+                            label: 'cred:',
+                            kind: monaco.languages.CompletionItemKind.Module,
+                            insertText: 'cred:',
+                            detail: 'https://www.w3.org/2018/credentials#',
+                            range: range
+                          },
+                          {
+                            label: 'vaccination:',
+                            kind: monaco.languages.CompletionItemKind.Module,
+                            insertText: 'vaccination:',
+                            detail: 'https://w3id.org/vaccination#',
+                            range: range
+                          }
+                        ];
+                        return { suggestions };
+                      }
+                    });
+                  } catch (error) {
+                    console.warn('Failed to initialize Monaco Editor:', error);
+                    setSparqlSyntaxError(`Editor initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                  }
+                }}
+              />
+            )}
+          </div>
+          
+          {/* Syntax Highlighting Error Message */}
+          {sparqlSyntaxError && (
+            <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md flex items-center space-x-2">
+              <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
+              <span className="text-sm text-yellow-700 dark:text-yellow-300">
+                {sparqlSyntaxError} - Using plain text editor as fallback.
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Execute Button */}
@@ -752,6 +837,16 @@ The corrected query should now work properly!`,
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 SPARQL Query Assistant
               </h3>
+              {llmConfig.isConfigured && (
+                <span className="px-2 py-1 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-full">
+                  {llmConfig.provider} AI
+                </span>
+              )}
+              {!llmConfig.isConfigured && (
+                <span className="px-2 py-1 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300 rounded-full">
+                  Fallback Mode
+                </span>
+              )}
             </div>
             <div className="flex items-center space-x-2">
               {chatMessages.length > 0 && (
@@ -773,9 +868,19 @@ The corrected query should now work properly!`,
             </div>
           </div>
 
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            Ask me anything about writing SPARQL queries for your credentials! I can help with syntax, examples, and specific queries.
-          </p>
+          <div className="mb-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+              {llmConfig.isConfigured 
+                ? `Ask me anything about writing SPARQL queries for your credentials! I'm powered by ${llmConfig.provider} AI and can help with syntax, examples, and specific queries.`
+                : "I'm running in fallback mode with basic templates. For full AI assistance, configure an LLM API key (OpenAI or Anthropic)."
+              }
+            </p>
+            {!llmConfig.isConfigured && llmConfig.error && (
+              <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded border border-amber-200 dark:border-amber-800">
+                {llmConfig.error}
+              </div>
+            )}
+          </div>
 
           {/* Chat Messages */}
           <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 h-64 overflow-y-auto mb-4 space-y-3">
@@ -820,7 +925,39 @@ The corrected query should now work properly!`,
                         ? 'bg-blue-600 text-white'
                         : 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white border border-gray-200 dark:border-gray-500'
                     }`}>
-                      <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+                      <div className="text-sm">
+                        {message.role === 'assistant' ? (
+                          // Parse and render markdown-style content with syntax highlighting
+                          message.content.split(/```sparql\n([\s\S]*?)\n```/g).map((part, index) => {
+                            if (index % 2 === 0) {
+                              // Regular text
+                              return (
+                                <div key={index} className="whitespace-pre-wrap">
+                                  {part}
+                                </div>
+                              );
+                            } else {
+                              // SPARQL code block
+                              return (
+                                <div key={index} className="my-3">
+                                  <div className="bg-gray-100 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700 overflow-hidden">
+                                    <div className="px-3 py-2 bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+                                      <span className="text-xs font-medium text-gray-600 dark:text-gray-300">SPARQL</span>
+                                    </div>
+                                    <div className="p-3">
+                                      <pre className="text-xs font-mono text-gray-900 dark:text-gray-100 whitespace-pre-wrap overflow-x-auto">
+                                        {part.trim()}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+                          })
+                        ) : (
+                          <div className="whitespace-pre-wrap">{message.content}</div>
+                        )}
+                      </div>
                       {message.role === 'assistant' && message.content.includes('```sparql') && (() => {
                         // Extract and validate the query
                         const codeBlockRegex = /```sparql\n([\s\S]*?)\n```/g;
@@ -854,9 +991,6 @@ The corrected query should now work properly!`,
                         }
                         return null;
                       })()}
-                      <div className="text-xs opacity-70 mt-1">
-                        {message.timestamp.toLocaleTimeString()}
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -916,23 +1050,140 @@ The corrected query should now work properly!`,
               <span>Copy</span>
             </button>
           </div>
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-md overflow-hidden">
-            <SyntaxHighlighter
-              language="turtle"
-              style={isDarkMode ? vscDarkPlus : vs}
-              customStyle={{
-                margin: 0,
-                padding: '1rem',
-                background: 'transparent',
-                fontSize: '0.75rem',
-                maxHeight: '20rem',
-                overflow: 'auto'
-              }}
-              wrapLongLines={true}
-            >
-              {rdfData || 'Loading RDF data...'}
-            </SyntaxHighlighter>
+          <div className={`border rounded-md overflow-hidden ${
+            isDarkMode 
+              ? 'border-gray-600 bg-gray-700' 
+              : 'border-gray-300 bg-white'
+          }`}>
+            {rdfSyntaxError ? (
+              // Fallback to a simple textarea if Monaco Editor fails
+              <textarea
+                value={rdfData || '# Loading RDF data...'}
+                readOnly
+                className="w-full h-96 p-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border-none resize-none focus:outline-none font-mono text-sm"
+                style={{ fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace' }}
+              />
+            ) : (
+              <Editor
+                height="400px"
+                language="turtle"
+                theme={isDarkMode ? 'turtle-dark' : 'turtle-light'}
+                value={rdfData || '# Loading RDF data...'}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 12,
+                  lineNumbers: 'on',
+                  roundedSelection: false,
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  tabSize: 2,
+                  insertSpaces: true,
+                  wordWrap: 'on',
+                  lineHeight: 18,
+                  fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace',
+                  padding: { top: 10, bottom: 10 },
+                  folding: true,
+                  foldingHighlight: true,
+                  showFoldingControls: 'mouseover',
+                  renderLineHighlight: 'none',
+                  selectOnLineNumbers: false,
+                  smoothScrolling: true,
+                  cursorStyle: 'line',
+                  contextmenu: false,
+                  quickSuggestions: false,
+                  suggestOnTriggerCharacters: false,
+                  acceptSuggestionOnCommitCharacter: false,
+                  acceptSuggestionOnEnter: 'off'
+                }}
+                beforeMount={(monaco) => {
+                  try {
+                    // Clear any previous syntax highlighting errors
+                    setRdfSyntaxError(null);
+                    
+                    // Register Turtle language if not already registered
+                    if (!monaco.languages.getLanguages().some(lang => lang.id === 'turtle-custom')) {
+                      monaco.languages.register({ id: 'turtle-custom' });
+                      
+                      // Define Turtle/RDF syntax highlighting with a simple, robust tokenizer
+                      monaco.languages.setMonarchTokensProvider('turtle-custom', {
+
+                        prefixes: [
+                          '@prefix', '@base', 'PREFIX', 'BASE'
+                        ],
+                        
+                        tokenizer: {
+                          root: [
+                            [/\ba\b/, 'keyword'],
+                            [/[a-zA-Z]\w*:[a-zA-Z]\w*/, 'type'],
+                            [/<[^>]+>/, 'string'],
+                            [/"[^"]*"/, 'string'],
+                            [/'[^']*'/, 'string'],
+                            [/_:[a-zA-Z]\w*/, 'variable'],
+                            [/\d+/, 'number'],
+                            [/#.*/, 'comment'],
+                            [/[;,.]/, 'delimiter'],
+                            [/\^\^/, 'operator']
+                          ]
+                        }
+                      });
+
+                      // Define light theme for Turtle
+                      monaco.editor.defineTheme('turtle-light', {
+                        base: 'vs',
+                        inherit: true,
+                        rules: [
+                          { token: 'keyword', foreground: '0000FF', fontStyle: 'bold' },
+                          { token: 'type', foreground: '267F99' },
+                          { token: 'string', foreground: '008000' },
+                          { token: 'variable', foreground: '795E26' },
+                          { token: 'number', foreground: '098658' },
+                          { token: 'comment', foreground: '008000', fontStyle: 'italic' },
+                          { token: 'operator', foreground: '000000', fontStyle: 'bold' }
+                        ],
+                        colors: {
+                          'editor.background': '#ffffff',
+                          'editor.foreground': '#374151'
+                        }
+                      });
+
+                      // Define dark theme for Turtle
+                      monaco.editor.defineTheme('turtle-dark', {
+                        base: 'vs-dark',
+                        inherit: true,
+                        rules: [
+                          { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+                          { token: 'type', foreground: '4EC9B0' },
+                          { token: 'string', foreground: '6A9955' },
+                          { token: 'variable', foreground: 'DCDCAA' },
+                          { token: 'number', foreground: 'B5CEA8' },
+                          { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+                          { token: 'operator', foreground: 'D4D4D4', fontStyle: 'bold' }
+                        ],
+                        colors: {
+                          'editor.background': '#374151',
+                          'editor.foreground': '#f9fafb'
+                        }
+                      });
+                    }
+                  } catch (error) {
+                    console.warn('Failed to setup Turtle syntax highlighting:', error);
+                    setRdfSyntaxError(`RDF syntax highlighting unavailable: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                  }
+                }}
+              />
+            )}
           </div>
+          
+          {/* Syntax Highlighting Error Message for RDF */}
+          {rdfSyntaxError && (
+            <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md flex items-center space-x-2">
+              <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
+              <span className="text-sm text-yellow-700 dark:text-yellow-300">
+                {rdfSyntaxError} - Using plain text display as fallback.
+              </span>
+            </div>
+          )}
         </div>
       )}
 
