@@ -4,6 +4,7 @@ import { Parser, Writer, Store } from 'n3';
 import { write as prettyTurtle } from '@jeswr/pretty-turtle';
 import { translate } from 'sparqlalgebrajs';
 import { QueryEngine } from '@comunica/query-sparql-rdfjs';
+import * as RDF from '@rdfjs/types';
 
 export class CredentialError extends Error {
   constructor(message: string, public code: string) {
@@ -478,26 +479,7 @@ export const executeSPARQLQuery = async (
     for (const credential of credentials) {
       try {
         // Convert credential to N-Quads using jsonld
-        const nquads = await jsonld.toRDF(credential, { format: 'application/n-quads' });
-        
-        // Parse N-Quads and add to store
-        const parser = new Parser({ format: 'N-Quads' });
-        
-        await new Promise<void>((resolve, reject) => {
-          parser.parse(nquads as string, (error, quad) => {
-            if (error) {
-              reject(new Error(`Failed to parse RDF for credential ${credential.id}: ${error.message}`));
-              return;
-            }
-            
-            if (quad) {
-              store.addQuad(quad);
-            } else {
-              // Parsing complete
-              resolve();
-            }
-          });
-        });
+        store.addAll(await jsonld.toRDF(credential) as RDF.Dataset);
       } catch (error) {
         console.warn(`Failed to convert credential ${credential.id} to RDF:`, error);
         // Continue with other credentials even if one fails
@@ -519,6 +501,8 @@ export const executeSPARQLQuery = async (
     
     // Convert bindings to the expected format
     const results: Record<string, { type: string; value: string }>[] = [];
+
+    console.log('Bindings:', bindings);
     
     for (const binding of bindings) {
       const result: Record<string, { type: string; value: string }> = {};
@@ -536,9 +520,6 @@ export const executeSPARQLQuery = async (
           } else {
             result[variable] = { type: 'literal', value: term.value };
           }
-        } else {
-          // Include unbound variables as empty values to ensure consistent table structure
-          result[variable] = { type: 'literal', value: '' };
         }
       }
       
@@ -546,16 +527,7 @@ export const executeSPARQLQuery = async (
       results.push(result);
     }
     
-    // If we have no results but have SELECT variables, create an empty result structure for table headers
-    if (results.length === 0 && selectVariables.length > 0) {
-      const emptyResult: Record<string, { type: string; value: string }> = {};
-      for (const variable of selectVariables) {
-        emptyResult[variable] = { type: 'literal', value: '' };
-      }
-      // Don't add the empty result to the array, but this ensures we have the structure
-      console.log('No results found, but SELECT variables are:', selectVariables);
-    }
-    
+
     console.log(`Returning ${results.length} formatted results`);
     return results;
     
@@ -668,15 +640,9 @@ SELECT ?givenName ?familyName ?fullName WHERE {
 PREFIX citizenship: <https://w3id.org/citizenship#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-SELECT ?subject ?birthDate ?isAdult WHERE {
-  {
-    ?subject schema:birthDate ?birthDate .
-  } UNION {
-    ?subject citizenship:birthDate ?birthDate .
-  }
-  BIND(xsd:date(?birthDate) AS ?birth)
-  BIND(xsd:date(NOW()) AS ?today)
-  BIND((?today - ?birth) > "P18Y"^^xsd:duration AS ?isAdult)
+SELECT ?subject ?isAdult WHERE {
+  ?subject schema:birthDate|citizenship:birthDate ?birthDate .
+  BIND((xsd:date(?birthDate) < xsd:date("${new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}")) AS ?isAdult)
 }`
   },
   {
