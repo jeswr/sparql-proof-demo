@@ -6,6 +6,7 @@ import { translate } from 'sparqlalgebrajs';
 import { QueryEngine } from '@comunica/query-sparql-rdfjs';
 import * as RDF from '@rdfjs/types';
 import { termToString } from 'rdf-string-ttl';
+import { canonize } from 'rdf-canonize';
 
 export class CredentialError extends Error {
   constructor(message: string, public code: string) {
@@ -594,6 +595,215 @@ export const createDerivedCredential = async (
     throw new CredentialError(
       `Failed to create derived credential: ${error instanceof Error ? error.message : 'Unknown error'}`, 
       'DERIVATION_ERROR'
+    );
+  }
+};
+
+// Helper function to get the validity period intersection of multiple credentials
+const getValidityPeriodIntersection = (credentials: VerifiableCredential[]): { validFrom: string; validUntil?: string } => {
+  // Find the latest issuanceDate (validFrom)
+  const validFrom = credentials
+    .map(cred => new Date(cred.issuanceDate))
+    .reduce((latest, current) => current > latest ? current : latest)
+    .toISOString();
+
+  // Find the earliest expirationDate (validUntil)
+  const expirationDates = credentials
+    .map(cred => cred.expirationDate)
+    .filter((date): date is string => date !== undefined)
+    .map(date => new Date(date));
+
+  const validUntil = expirationDates.length > 0 
+    ? expirationDates.reduce((earliest, current) => current < earliest ? current : earliest).toISOString()
+    : undefined;
+
+  return { validFrom, validUntil };
+};
+
+// Helper function to canonicalize RDF data and generate hash
+const canonicalizeAndHash = async (quads: RDF.Quad[]): Promise<string> => {
+  try {
+    // Convert quads to N-Triples format for canonicalization
+    const writer = new Writer({ format: 'N-Triples' });
+    
+    // Add all quads to the writer
+    for (const quad of quads) {
+      writer.addQuad(quad);
+    }
+    
+    // Get the N-Triples string
+    const ntriples = await new Promise<string>((resolve, reject) => {
+      writer.end((error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      });
+    });
+
+    // Canonicalize the RDF dataset
+    const canonicalized = await canonize(ntriples, {
+      algorithm: 'URDNA2015',
+      format: 'application/n-quads'
+    });
+
+    // Generate SHA-256 hash of the canonicalized dataset
+    const encoder = new TextEncoder();
+    const data = encoder.encode(canonicalized);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (error) {
+    console.error('Failed to canonicalize and hash RDF data:', error);
+    // Fallback to simple timestamp-based hash
+    return await hashString(Date.now().toString() + Math.random().toString());
+  }
+};
+
+// Create multiple derived credentials from CONSTRUCT query results
+export const createDerivedCredentialsFromConstruct = async (
+  constructQuads: RDF.Quad[],
+  selectedBindings: RDF.Bindings[],
+  sourceCredentials: VerifiableCredential[],
+  derivedCredentialTemplate: {
+    type?: string[];
+    name?: string;
+    description?: string;
+  } = {}
+): Promise<VerifiableCredential[]> => {
+  try {
+    const validityPeriod = getValidityPeriodIntersection(sourceCredentials);
+    const derivedCredentials: VerifiableCredential[] = [];
+
+    // Group quads by subject (from ?subject variable in bindings)
+    const subjectToQuads = new Map<string, RDF.Quad[]>();
+    const subjectToBindings = new Map<string, RDF.Bindings>();
+
+    // Build mappings from selected bindings
+    selectedBindings.forEach((bindings, index) => {
+      const subjectTerm = bindings.get('subject');
+      if (subjectTerm) {
+        const subjectValue = subjectTerm.value;
+        
+        // Find quads related to this subject
+        const relatedQuads = constructQuads.filter(quad => 
+          quad.subject.value === subjectValue
+        );
+
+        if (relatedQuads.length > 0) {
+          subjectToQuads.set(subjectValue, relatedQuads);
+          subjectToBindings.set(subjectValue, bindings);
+        }
+      }
+    });
+
+    // If no subject variables found, create one credential for all data
+    if (subjectToQuads.size === 0) {
+      console.warn('No ?subject variable found in bindings, creating single credential with all CONSTRUCT data');
+      
+      // Generate hash for the entire dataset
+      const datasetHash = await canonicalizeAndHash(constructQuads);
+      
+      const now = new Date().toISOString();
+      const derivedCredential: VerifiableCredential = {
+        '@context': [
+          'https://www.w3.org/2018/credentials/v1',
+          'https://w3id.org/credentials/derived/v1'
+        ],
+        id: `did:example:derived:${datasetHash}`,
+        type: ['VerifiableCredential', 'Derived', ...(derivedCredentialTemplate.type || [])],
+        issuer: 'did:example:derived',
+        issuanceDate: validityPeriod.validFrom,
+        ...(validityPeriod.validUntil && { expirationDate: validityPeriod.validUntil }),
+        name: derivedCredentialTemplate.name || 'Derived Credential from CONSTRUCT Query',
+        description: derivedCredentialTemplate.description || 'Credential derived from SPARQL CONSTRUCT query results',
+        credentialSubject: {
+          id: 'did:derived:' + datasetHash,
+          type: 'DerivedCredentialSubject',
+          derivedFrom: sourceCredentials.map(cred => cred.id),
+          constructResult: await prettyTurtle(constructQuads, {
+            prefixes: {
+              'cred': 'https://www.w3.org/2018/credentials#',
+              'schema': 'http://schema.org/',
+              'vaccination': 'https://w3id.org/vaccination#',
+              'derived': 'https://example.org/derived/',
+              'xsd': 'http://www.w3.org/2001/XMLSchema#'
+            }
+          })
+        },
+        proof: {
+          type: 'DerivedCredentialProof2024',
+          created: now,
+          verificationMethod: 'did:example:derived#keys-1',
+          proofPurpose: 'assertionMethod',
+          proofValue: 'mock-derived-proof-' + datasetHash,
+          derivationMetadata: {
+            sourceCredentials: sourceCredentials.length,
+            datasetHash: datasetHash,
+            derivationTimestamp: now
+          }
+        }
+      };
+
+      derivedCredentials.push(derivedCredential);
+    } else {
+      // Create one credential per subject
+      for (const [subjectValue, quads] of subjectToQuads) {
+        const bindings = subjectToBindings.get(subjectValue);
+        
+        // Generate hash for this subject's data
+        const datasetHash = await canonicalizeAndHash(quads);
+        
+        const now = new Date().toISOString();
+        const derivedCredential: VerifiableCredential = {
+          '@context': [
+            'https://www.w3.org/2018/credentials/v1',
+            'https://w3id.org/credentials/derived/v1'
+          ],
+          id: `did:example:derived:${datasetHash}`,
+          type: ['VerifiableCredential', 'Derived', ...(derivedCredentialTemplate.type || [])],
+          issuer: 'did:example:derived',
+          issuanceDate: validityPeriod.validFrom,
+          ...(validityPeriod.validUntil && { expirationDate: validityPeriod.validUntil }),
+          name: derivedCredentialTemplate.name || `Derived Credential for ${subjectValue}`,
+          description: derivedCredentialTemplate.description || `Credential derived from SPARQL CONSTRUCT query for subject ${subjectValue}`,
+          credentialSubject: {
+            id: subjectValue,
+            type: 'DerivedCredentialSubject',
+            derivedFrom: sourceCredentials.map(cred => cred.id),
+            constructResult: await prettyTurtle(quads, {
+              prefixes: {
+                'cred': 'https://www.w3.org/2018/credentials#',
+                'schema': 'http://schema.org/',
+                'vaccination': 'https://w3id.org/vaccination#',
+                'derived': 'https://example.org/derived/',
+                'xsd': 'http://www.w3.org/2001/XMLSchema#'
+              }
+            })
+          },
+          proof: {
+            type: 'DerivedCredentialProof2024',
+            created: now,
+            verificationMethod: 'did:example:derived#keys-1',
+            proofPurpose: 'assertionMethod',
+            proofValue: 'mock-derived-proof-' + datasetHash,
+            derivationMetadata: {
+              sourceCredentials: sourceCredentials.length,
+              datasetHash: datasetHash,
+              subjectBinding: subjectValue,
+              derivationTimestamp: now
+            }
+          }
+        };
+
+        derivedCredentials.push(derivedCredential);
+      }
+    }
+
+    return derivedCredentials;
+  } catch (error) {
+    console.error('Failed to create derived credentials from CONSTRUCT:', error);
+    throw new CredentialError(
+      `Failed to create derived credentials: ${error instanceof Error ? error.message : 'Unknown error'}`, 
+      'CONSTRUCT_DERIVATION_ERROR'
     );
   }
 };

@@ -7,6 +7,7 @@ import { VerifiableCredential } from '@/types/credential';
 import { 
   executeSPARQLQuery, 
   createDerivedCredential, 
+  createDerivedCredentialsFromConstruct,
   getSampleSPARQLQueries
 } from '@/utils/credentialUtils';
 import { 
@@ -93,6 +94,7 @@ SELECT * WHERE {
   const [queryVariables, setQueryVariables] = useState<string[]>([]);
   const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set());
   const [constructResult, setConstructResult] = useState<string>('');
+  const [constructQuads, setConstructQuads] = useState<RDF.Quad[]>([]);
   const [isConstructQuery, setIsConstructQuery] = useState(false);
   const [rdfData, setRdfData] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
@@ -205,6 +207,7 @@ SELECT * WHERE {
 
     if (selection.size === 0) {
       setConstructResult('');
+      setConstructQuads([]);
       setIsExecutingConstruct(false);
       return;
     }
@@ -239,10 +242,12 @@ SELECT * WHERE {
       if (quads.length === 0) {
         console.warn('No quads generated for CONSTRUCT query');
         setConstructResult('');
+        setConstructQuads([]);
       } else {
         const result = await write(quads, { prefixes: SPARQL_PREFIXES });
         console.log('CONSTRUCT result generated:', result.length, 'characters');
         setConstructResult(result);
+        setConstructQuads(quads);
       }
     } catch (err) {
       console.error('CONSTRUCT execution failed:', err);
@@ -417,6 +422,7 @@ SELECT * WHERE {
           } else {
             setSelectedResults(new Set());
             setConstructResult('');
+            setConstructQuads([]);
           }
         } catch (selectError) {
           console.error('Failed to execute SELECT query for CONSTRUCT:', selectError);
@@ -430,6 +436,7 @@ SELECT * WHERE {
         const results = await executeSPARQLQuery(query, credentials);
         setQueryResults(results);
         setConstructResult('');
+        setConstructQuads([]);
       } else {
         throw new Error('Only SELECT and CONSTRUCT queries are supported');
       }
@@ -438,6 +445,71 @@ SELECT * WHERE {
       setQueryVariables([]);
       setIsConstructQuery(false);
       setConstructResult('');
+      setConstructQuads([]);
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  // Create multiple derived credentials from CONSTRUCT results
+  const createDerivedFromConstruct = async () => {
+    if (!isConstructQuery) {
+      setError('This function is only available for CONSTRUCT queries');
+      return;
+    }
+
+    if (constructQuads.length === 0) {
+      setError('No CONSTRUCT results available to create derived credentials from');
+      return;
+    }
+
+    if (selectedResults.size === 0) {
+      setError('Please select at least one result binding to create derived credentials');
+      return;
+    }
+
+    setIsExecuting(true);
+    setError(null);
+
+    try {
+      // Get selected bindings
+      const selectedBindings = Array.from(selectedResults).map(index => queryResults[index]);
+
+      // Create derived credentials
+      const derivedCredentials = await createDerivedCredentialsFromConstruct(
+        constructQuads,
+        selectedBindings,
+        credentials,
+        {
+          type: derivedCredentialForm.type ? [derivedCredentialForm.type] : [],
+          name: derivedCredentialForm.name || undefined,
+          description: derivedCredentialForm.description || undefined
+        }
+      );
+
+      console.log(`Created ${derivedCredentials.length} derived credentials:`, derivedCredentials);
+
+      // Notify parent component about each new credential
+      for (const credential of derivedCredentials) {
+        onDerivedCredentialCreated(credential);
+      }
+
+      // Reset form and show success
+      setDerivedCredentialForm({
+        id: '',
+        type: 'DerivedCredential',
+        issuer: 'did:example:derived-issuer',
+        name: '',
+        description: ''
+      });
+      setShowCreateDerived(false);
+
+      // Show success message
+      setError(null);
+      alert(`Successfully created ${derivedCredentials.length} derived credential${derivedCredentials.length !== 1 ? 's' : ''}!`);
+    } catch (err) {
+      console.error('Failed to create derived credentials from CONSTRUCT:', err);
+      setError(err instanceof Error ? err.message : 'Failed to create derived credentials');
     } finally {
       setIsExecuting(false);
     }
@@ -449,6 +521,7 @@ SELECT * WHERE {
     setQueryVariables([]);
     setSelectedResults(new Set());
     setConstructResult('');
+    setConstructQuads([]);
     setIsConstructQuery(false);
     setError(null);
   };
@@ -1412,15 +1485,6 @@ The corrected query should now work properly!`,
                 Query Results ({queryResults.length} results)
               </h3>
             </div>
-            {queryResults.length > 0 && (
-              <button
-                onClick={() => setShowCreateDerived(!showCreateDerived)}
-                className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 flex items-center space-x-1"
-              >
-                <Plus className="h-3 w-3" />
-                <span>Create Derived Credential</span>
-              </button>
-            )}
           </div>
 
           {/* Results Table */}
@@ -1514,15 +1578,26 @@ The corrected query should now work properly!`,
                 <span className="text-sm text-gray-600 dark:text-gray-400">Generating...</span>
               )}
             </div>
-            {constructResult && (
-              <button
-                onClick={() => copyToClipboard(constructResult)}
-                className="px-3 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 flex items-center space-x-1"
-              >
-                <Copy className="h-3 w-3" />
-                <span>Copy</span>
-              </button>
-            )}
+            <div className="flex items-center space-x-2">
+              {constructResult && (
+                <button
+                  onClick={() => setShowCreateDerived(!showCreateDerived)}
+                  className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 flex items-center space-x-1"
+                >
+                  <Plus className="h-3 w-3" />
+                  <span>Create Derived</span>
+                </button>
+              )}
+              {constructResult && (
+                <button
+                  onClick={() => copyToClipboard(constructResult)}
+                  className="px-3 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 flex items-center space-x-1"
+                >
+                  <Copy className="h-3 w-3" />
+                  <span>Copy</span>
+                </button>
+              )}
+            </div>
           </div>
           
           <div className={`border rounded-md overflow-hidden ${
@@ -1638,45 +1713,39 @@ The corrected query should now work properly!`,
       )}
 
       {/* Create Derived Credential Form */}
-      {showCreateDerived && queryResults.length > 0 && (
+      {showCreateDerived && isConstructQuery && constructResult && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
           <div className="flex items-center space-x-2 mb-4">
             <Hash className="h-5 w-5 text-purple-600 dark:text-purple-400" />
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Create Derived Credential
+              Create Derived Credentials from CONSTRUCT
             </h3>
+          </div>
+
+          <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
+            <p className="text-sm text-green-700 dark:text-green-300">
+              <strong>Multi-Credential Creation:</strong> This will create one derived credential for each set of selected bindings. 
+              Each credential will have a unique ID based on the RDF-C14N hash of its data, with the credentialSubject determined by the ?subject variable.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Credential ID *
-              </label>
-              <input
-                type="text"
-                value={derivedCredentialForm.id}
-                onChange={(e) => setDerivedCredentialForm(prev => ({ ...prev, id: e.target.value }))}
-                placeholder="https://example.com/derived/credential/1"
-                className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Credential Type
+                Additional Credential Type (optional)
               </label>
               <input
                 type="text"
                 value={derivedCredentialForm.type}
                 onChange={(e) => setDerivedCredentialForm(prev => ({ ...prev, type: e.target.value }))}
-                placeholder="DerivedCredential"
+                placeholder="AgeVerification, VaccinationSummary, etc."
                 className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Name *
+                Name Template (optional)
               </label>
               <input
                 type="text"
@@ -1686,29 +1755,16 @@ The corrected query should now work properly!`,
                 className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               />
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Issuer
-              </label>
-              <input
-                type="text"
-                value={derivedCredentialForm.issuer}
-                onChange={(e) => setDerivedCredentialForm(prev => ({ ...prev, issuer: e.target.value }))}
-                placeholder="did:example:derived-issuer"
-                className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              />
-            </div>
           </div>
 
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Description
+              Description Template (optional)
             </label>
             <textarea
               value={derivedCredentialForm.description}
               onChange={(e) => setDerivedCredentialForm(prev => ({ ...prev, description: e.target.value }))}
-              placeholder="A derived credential proving age verification without revealing exact birth date"
+              placeholder="Derived credential containing verified information from SPARQL CONSTRUCT query"
               className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               rows={3}
             />
@@ -1716,12 +1772,17 @@ The corrected query should now work properly!`,
 
           <div className="flex space-x-2">
             <button
-              onClick={createDerived}
-              disabled={isExecuting}
+              onClick={createDerivedFromConstruct}
+              disabled={isExecuting || selectedResults.size === 0}
               className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
             >
               <Plus className="h-4 w-4" />
-              <span>{isExecuting ? 'Creating...' : 'Create Derived Credential'}</span>
+              <span>
+                {isExecuting 
+                  ? 'Creating...' 
+                  : `Create ${selectedResults.size} Derived Credential${selectedResults.size !== 1 ? 's' : ''}`
+                }
+              </span>
             </button>
             <button
               onClick={() => setShowCreateDerived(false)}
@@ -1733,9 +1794,12 @@ The corrected query should now work properly!`,
 
           <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
             <p className="text-sm text-blue-700 dark:text-blue-300">
-              <strong>Note:</strong> This credential will include a mock signature. Once your ZKP proof engine is ready, 
-              replace the mock proof with a real zero-knowledge proof that validates the SPARQL query results 
-              without revealing the underlying credential data.
+              <strong>Note:</strong> Each credential will have:
+              <br />• ID: did:example:derived:{'{rdf-c14n-hash}'}
+              <br />• Type: ["VerifiableCredential", "Derived", ...additional types]
+              <br />• Issuer: did:example:derived
+              <br />• Subject: Value from ?subject variable in your query
+              <br />• Validity: Intersection of all source credential validity periods
             </p>
           </div>
         </div>
