@@ -151,7 +151,7 @@ SELECT * WHERE {
     
     // Automatically update CONSTRUCT result when selection changes
     if (isConstructQuery) {
-      executeConstructWithSelection(newSelection, queryResults);
+      executeConstructWithSelection(newSelection, queryResults, false);
     }
   };
 
@@ -167,13 +167,14 @@ SELECT * WHERE {
     
     // Automatically update CONSTRUCT result when selection changes
     if (isConstructQuery) {
-      executeConstructWithSelection(newSelection, queryResults);
+      executeConstructWithSelection(newSelection, queryResults, false);
     }
   };
 
   // Execute CONSTRUCT with specific selection (internal helper)
-  const executeConstructWithSelection = async (selection: Set<number>, bindings: RDF.Bindings[]) => {
-    if (!isConstructQuery) {
+  const executeConstructWithSelection = async (selection: Set<number>, bindings: RDF.Bindings[], forceExecute: boolean = false) => {
+    // Only check isConstructQuery if not forced (for initial execution, we force it)
+    if (!forceExecute && !isConstructQuery) {
       return;
     }
 
@@ -191,7 +192,8 @@ SELECT * WHERE {
       console.log('executeConstructWithSelection called with:', {
         selectionSize: selection.size,
         bindingsProvided: !!bindings,
-        availableBindingsLength: availableBindings.length
+        availableBindingsLength: availableBindings.length,
+        forceExecute
       });
       
       // Get selected bindings
@@ -209,6 +211,8 @@ SELECT * WHERE {
           ) as RDF.Quad
         );
       });
+
+      console.log('Constructing quads from selected bindings:', quads, availableBindings, selection);
 
       const result = await write(quads);
       console.log('CONSTRUCT result generated:', result.length, 'characters');
@@ -404,8 +408,8 @@ SELECT * WHERE {
           if (results.length > 0) {
             const allSelected = new Set(results.map((_, index) => index));
             setSelectedResults(allSelected);
-            // Execute CONSTRUCT with all results selected immediately, passing the fresh results
-            await executeConstructWithSelection(allSelected, results);
+            // Execute CONSTRUCT with all results selected immediately, passing the fresh results and forcing execution
+            await executeConstructWithSelection(allSelected, results, true);
           } else {
             setSelectedResults(new Set());
             setConstructResult('');
