@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Database, Play, Plus, Code, AlertCircle, CheckCircle, Copy, Hash, MessageCircle, Send, Bot, User, Minimize2, Trash2 } from 'lucide-react';
+import { Database, Play, Plus, Code, AlertCircle, CheckCircle, Copy, Hash, MessageCircle, Send, Bot, User, Minimize2, Trash2, Loader2 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { VerifiableCredential } from '@/types/credential';
 import { 
@@ -73,6 +73,7 @@ SELECT * WHERE {
   const [isConstructQuery, setIsConstructQuery] = useState(false);
   const [rdfData, setRdfData] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isExecutingConstruct, setIsExecutingConstruct] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRDF, setShowRDF] = useState(false);
   const [showCreateDerived, setShowCreateDerived] = useState(false);
@@ -138,19 +139,63 @@ SELECT * WHERE {
     filterSampleQueries();
   }, [credentials]);
 
-  // Execute CONSTRUCT query with selected bindings
-  const executeConstruct = async () => {
-    if (!isConstructQuery || selectedResults.size === 0) {
-      setError('Please select at least one result to construct RDF');
+  // Toggle result selection and automatically update CONSTRUCT result
+  const toggleResultSelection = (index: number) => {
+    const newSelection = new Set(selectedResults);
+    if (newSelection.has(index)) {
+      newSelection.delete(index);
+    } else {
+      newSelection.add(index);
+    }
+    setSelectedResults(newSelection);
+    
+    // Automatically update CONSTRUCT result when selection changes
+    if (isConstructQuery) {
+      executeConstructWithSelection(newSelection, queryResults);
+    }
+  };
+
+  // Select/deselect all results and automatically update CONSTRUCT result
+  const toggleSelectAll = () => {
+    let newSelection: Set<number>;
+    if (selectedResults.size === queryResults.length) {
+      newSelection = new Set();
+    } else {
+      newSelection = new Set(queryResults.map((_, index) => index));
+    }
+    setSelectedResults(newSelection);
+    
+    // Automatically update CONSTRUCT result when selection changes
+    if (isConstructQuery) {
+      executeConstructWithSelection(newSelection, queryResults);
+    }
+  };
+
+  // Execute CONSTRUCT with specific selection (internal helper)
+  const executeConstructWithSelection = async (selection: Set<number>, bindings: RDF.Bindings[]) => {
+    if (!isConstructQuery) {
       return;
     }
 
-    setIsExecuting(true);
-    setError(null);
+    setIsExecutingConstruct(true);
+
+    if (selection.size === 0) {
+      setConstructResult('');
+      setIsExecutingConstruct(false);
+      return;
+    }
 
     try {
+      // Use provided bindings or fall back to queryResults state
+      const availableBindings = bindings || queryResults;
+      console.log('executeConstructWithSelection called with:', {
+        selectionSize: selection.size,
+        bindingsProvided: !!bindings,
+        availableBindingsLength: availableBindings.length
+      });
+      
       // Get selected bindings
-      const selectedBindings = Array.from(selectedResults).map(index => queryResults[index]);
+      const selectedBindings = Array.from(selection).map(index => availableBindings[index]);
 
       const algebra = translate(query);
       if (algebra.type !== 'construct') {
@@ -165,32 +210,29 @@ SELECT * WHERE {
         );
       });
 
-      setConstructResult(await write(quads));
+      const result = await write(quads);
+      console.log('CONSTRUCT result generated:', result.length, 'characters');
+      setConstructResult(result);
     } catch (err) {
+      console.error('CONSTRUCT execution failed:', err);
       setError(err instanceof Error ? err.message : 'CONSTRUCT execution failed');
     } finally {
-      setIsExecuting(false);
+      setIsExecutingConstruct(false);
     }
   };
 
-  // Toggle result selection
-  const toggleResultSelection = (index: number) => {
-    const newSelection = new Set(selectedResults);
-    if (newSelection.has(index)) {
-      newSelection.delete(index);
-    } else {
-      newSelection.add(index);
-    }
-    setSelectedResults(newSelection);
-  };
-
-  // Select/deselect all results
-  const toggleSelectAll = () => {
-    if (selectedResults.size === queryResults.length) {
-      setSelectedResults(new Set());
-    } else {
-      setSelectedResults(new Set(queryResults.map((_, index) => index)));
-    }
+  // Calculate dynamic height for CONSTRUCT result editor based on content
+  const getConstructResultHeight = (): string => {
+    if (!constructResult) return '200px';
+    
+    const lines = constructResult.split('\n').length;
+    const minHeight = 200;
+    const maxHeight = 600;
+    const lineHeight = 20;
+    const padding = 40;
+    
+    const calculatedHeight = Math.max(minHeight, Math.min(maxHeight, lines * lineHeight + padding));
+    return `${calculatedHeight}px`;
   };
 
   // Detect dark mode and update Monaco theme
@@ -357,14 +399,21 @@ SELECT * WHERE {
           const results = await executeSPARQLQuery(selectQuery, credentials);
           setQueryResults(results);
           console.log('SELECT results for CONSTRUCT:', results);
+          
+          // Automatically select all results and execute CONSTRUCT
+          if (results.length > 0) {
+            const allSelected = new Set(results.map((_, index) => index));
+            setSelectedResults(allSelected);
+            // Execute CONSTRUCT with all results selected immediately, passing the fresh results
+            await executeConstructWithSelection(allSelected, results);
+          } else {
+            setSelectedResults(new Set());
+            setConstructResult('');
+          }
         } catch (selectError) {
           console.error('Failed to execute SELECT query for CONSTRUCT:', selectError);
           throw new Error(`Failed to get SELECT results for CONSTRUCT query: ${selectError instanceof Error ? selectError.message : 'Unknown error'}`);
         }
-
-        // Reset selections and construct result
-        setSelectedResults(new Set());
-        setConstructResult('');
       } else if (algebra.type === 'project') {
         setIsConstructQuery(false);
         const selectVariables = algebra.variables.map((variable) => variable.value);
@@ -1437,43 +1486,35 @@ The corrected query should now work properly!`,
               </tbody>
             </table>
           </div>
-          
-          {/* CONSTRUCT Controls */}
-          {isConstructQuery && queryResults.length > 0 && (
-            <div className="mt-4 flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
-              <div className="text-sm text-blue-700 dark:text-blue-300">
-                <strong>{selectedResults.size}</strong> of <strong>{queryResults.length}</strong> results selected for CONSTRUCT
-              </div>
-              <button
-                onClick={executeConstruct}
-                disabled={isExecuting || selectedResults.size === 0}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-              >
-                <Play className="h-4 w-4" />
-                <span>{isExecuting ? 'Constructing...' : 'Execute CONSTRUCT'}</span>
-              </button>
-            </div>
-          )}
         </div>
       )}
 
       {/* CONSTRUCT Result Display */}
-      {isConstructQuery && constructResult && (
+      {isConstructQuery && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2">
-              <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+              {isExecutingConstruct ? (
+                <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
+              ) : (
+                <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+              )}
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 CONSTRUCT Result
               </h3>
+              {isExecutingConstruct && (
+                <span className="text-sm text-gray-600 dark:text-gray-400">Generating...</span>
+              )}
             </div>
-            <button
-              onClick={() => copyToClipboard(constructResult)}
-              className="px-3 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 flex items-center space-x-1"
-            >
-              <Copy className="h-3 w-3" />
-              <span>Copy</span>
-            </button>
+            {constructResult && (
+              <button
+                onClick={() => copyToClipboard(constructResult)}
+                className="px-3 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 flex items-center space-x-1"
+              >
+                <Copy className="h-3 w-3" />
+                <span>Copy</span>
+              </button>
+            )}
           </div>
           
           <div className={`border rounded-md overflow-hidden ${
@@ -1482,10 +1523,10 @@ The corrected query should now work properly!`,
               : 'border-gray-300 bg-white'
           }`}>
             <Editor
-              height="400px"
+              height={getConstructResultHeight()}
               language="turtle-custom"
               theme={isDarkMode ? 'turtle-dark' : 'turtle-light'}
-              value={constructResult}
+              value={isExecutingConstruct ? '# Generating CONSTRUCT result...' : constructResult}
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
