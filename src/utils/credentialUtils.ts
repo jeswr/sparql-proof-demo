@@ -5,6 +5,7 @@ import { write as prettyTurtle } from '@jeswr/pretty-turtle';
 import { translate } from 'sparqlalgebrajs';
 import { QueryEngine } from '@comunica/query-sparql-rdfjs';
 import * as RDF from '@rdfjs/types';
+import { termToString } from 'rdf-string-ttl';
 
 export class CredentialError extends Error {
   constructor(message: string, public code: string) {
@@ -465,7 +466,7 @@ export const combinedRDFFromCredentials = async (credentials: VerifiableCredenti
 export const executeSPARQLQuery = async (
   sparqlQuery: string, 
   credentials: VerifiableCredential[]
-): Promise<Record<string, { type: string; value: string }>[]> => {
+): Promise<RDF.Bindings[]> => {
   try {
     console.log('SPARQL Query:', sparqlQuery);
     console.log('Credentials to query:', credentials.length);
@@ -525,39 +526,7 @@ export const executeSPARQLQuery = async (
     
     // Collect all bindings
     const bindings = await bindingsStream.toArray();
-    console.log(`Query returned ${bindings.length} results`);
-    
-    // Convert bindings to the expected format
-    const results: Record<string, { type: string; value: string }>[] = [];
-
-    console.log('Bindings:', bindings);
-    
-    for (const binding of bindings) {
-      const result: Record<string, { type: string; value: string }> = {};
-      
-      // Extract values for each variable - include all variables even if unbound
-      for (const variable of selectVariables) {
-        const term = binding.get(variable);
-        if (term) {
-          if (term.termType === 'NamedNode') {
-            result[variable] = { type: 'uri', value: term.value };
-          } else if (term.termType === 'Literal') {
-            result[variable] = { type: 'literal', value: term.value };
-          } else if (term.termType === 'BlankNode') {
-            result[variable] = { type: 'bnode', value: term.value };
-          } else {
-            result[variable] = { type: 'literal', value: term.value };
-          }
-        }
-      }
-      
-      // Always add the result even if some variables are unbound
-      results.push(result);
-    }
-    
-
-    console.log(`Returning ${results.length} formatted results`);
-    return results;
+    return bindings;
     
   } catch (error) {
     console.error('SPARQL query execution failed:', error);
@@ -565,109 +534,6 @@ export const executeSPARQLQuery = async (
       throw error;
     }
     throw new CredentialError(`SPARQL query failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'SPARQL_ERROR');
-  }
-};
-
-export const executeConstructQuery = async (
-  constructQuery: string,
-  selectedBindings: Record<string, { type: string; value: string }>[],
-  credentials: VerifiableCredential[]
-): Promise<string> => {
-  try {
-    console.log('CONSTRUCT Query:', constructQuery);
-    console.log('Selected bindings:', selectedBindings.length);
-    
-    // Parse the CONSTRUCT query using sparqlalgebrajs
-    const algebra = translate(constructQuery);
-    
-    // Check if this is a CONSTRUCT query
-    if (algebra.type !== 'construct') {
-      throw new CredentialError('Only CONSTRUCT queries are supported in executeConstructQuery', 'UNSUPPORTED_QUERY_TYPE');
-    }
-    
-    // Create a combined RDF store from all credentials
-    const store = new Store();
-    
-    // Convert each credential to RDF and add to the store
-    for (const credential of credentials) {
-      try {
-        const rdfDataset = await jsonld.toRDF(credential);
-        store.addAll(rdfDataset as RDF.Dataset);
-      } catch (error) {
-        console.warn(`Failed to convert credential ${credential.id} to RDF:`, error);
-      }
-    }
-    
-    console.log(`Created RDF store with ${store.size} quads`);
-    
-    // Create a new store to hold the constructed triples
-    const constructedStore = new Store();
-    
-    // For each selected binding, execute the original CONSTRUCT query
-    // and filter results based on the binding values
-    for (const binding of selectedBindings) {
-      try {
-        // Execute the original CONSTRUCT query
-        const queryEngine = new QueryEngine();
-        const quadStream = await queryEngine.queryQuads(constructQuery, {
-          sources: [store],
-        });
-        
-        // Get all constructed quads
-        const allQuads = await quadStream.toArray();
-        
-        // Filter quads that match this specific binding
-        // This is a simplified approach - in a full implementation,
-        // we would use the algebra to properly match bindings
-        const matchingQuads = allQuads.filter(() => {
-          // For now, just add all quads from each binding
-          // A more sophisticated implementation would check if the quad
-          // was generated from this specific binding
-          return true;
-        });
-        
-        // Add matching quads to the result store
-        constructedStore.addAll(matchingQuads);
-      } catch (error) {
-        console.warn('Failed to process binding:', binding, error);
-      }
-    }
-    
-    console.log(`Constructed ${constructedStore.size} triples`);
-    
-    // Convert the constructed store to pretty Turtle
-    const allQuads = constructedStore.getQuads(null, null, null, null);
-    
-    // Define prefix map for pretty-turtle
-    const prefixMap = {
-      'cred': 'https://www.w3.org/2018/credentials#',
-      'credex': 'https://www.w3.org/2018/credentials/examples#',
-      'sec': 'https://w3id.org/security#',
-      'citizenship': 'https://w3id.org/citizenship#',
-      'vaccination': 'https://w3id.org/vaccination#',
-      'xsd': 'http://www.w3.org/2001/XMLSchema#',
-      'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
-      'rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
-      'schema': 'http://schema.org/',
-      'foaf': 'http://xmlns.com/foaf/0.1/',
-      'dc': 'http://purl.org/dc/terms/',
-      'example': 'https://example.org/',
-      'derived': 'https://example.org/derived/'
-    };
-    
-    // Use pretty-turtle to format the output
-    const prettyTurtleOutput = await prettyTurtle(allQuads, { 
-      prefixes: prefixMap
-    });
-    
-    return prettyTurtleOutput;
-    
-  } catch (error) {
-    console.error('CONSTRUCT query execution failed:', error);
-    if (error instanceof CredentialError) {
-      throw error;
-    }
-    throw new CredentialError(`CONSTRUCT query failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'CONSTRUCT_ERROR');
   }
 };
 

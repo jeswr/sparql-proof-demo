@@ -6,7 +6,6 @@ import Editor from '@monaco-editor/react';
 import { VerifiableCredential } from '@/types/credential';
 import { 
   executeSPARQLQuery, 
-  executeConstructQuery,
   createDerivedCredential, 
   getSampleSPARQLQueries
 } from '@/utils/credentialUtils';
@@ -18,58 +17,9 @@ import {
 import { translate, toSparql, Algebra, Factory } from 'sparqlalgebrajs';
 import * as jsonld from 'jsonld';
 import { Parser, Store } from 'n3';
-import { write as prettyTurtle } from '@jeswr/pretty-turtle';
+import { write as prettyTurtle, write } from '@jeswr/pretty-turtle';
 import * as RDF from "@rdfjs/types";
-import { everyTermsNested, forEachTermsNested } from "rdf-terms";
-
-// Utility function to extract WHERE clause from CONSTRUCT query
-const extractWhereClause = (constructQuery: string): string => {
-  try {
-    // Parse the CONSTRUCT query using sparqlalgebrajs
-    const algebra = translate(constructQuery);
-    
-    if (algebra.type !== 'construct') {
-      throw new Error('Query is not a CONSTRUCT query');
-    }
-    
-    // Convert the input algebra (WHERE clause) back to SPARQL
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const whereClause = toSparql((algebra as any).input);
-    
-    // Extract PREFIX declarations from the original query
-    const prefixMatches = constructQuery.match(/PREFIX\s+\w+:\s*<[^>]+>\s*/gi) || [];
-    const prefixes = prefixMatches.join('\n');
-    
-    // Construct the complete SELECT query with prefixes
-    const selectQuery = prefixes 
-      ? `${prefixes}\n\nSELECT * WHERE {\n${whereClause}\n}`
-      : `SELECT * WHERE {\n${whereClause}\n}`;
-    
-    console.log('Extracted SELECT query using sparqlalgebrajs:', selectQuery);
-    return selectQuery;
-    
-  } catch (error) {
-    console.error('Failed to extract WHERE clause using sparqlalgebrajs:', error);
-    
-    // Fallback to regex-based extraction if algebra conversion fails
-    try {
-      const prefixMatches = constructQuery.match(/PREFIX\s+\w+:\s*<[^>]+>\s*/gi) || [];
-      const prefixes = prefixMatches.join('\n');
-      
-      const whereMatch = constructQuery.match(/WHERE\s*\{([\s\S]*)\}$/i);
-      if (whereMatch) {
-        const whereBody = whereMatch[1].trim();
-        return prefixes 
-          ? `${prefixes}\n\nSELECT * WHERE {\n${whereBody}\n}`
-          : `SELECT * WHERE {\n${whereBody}\n}`;
-      }
-      
-      throw new Error('Could not extract WHERE clause from CONSTRUCT query');
-    } catch {
-      throw new Error(`Failed to parse CONSTRUCT query: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-};
+import { everyTermsNested, forEachTermsNested, mapTermsNested } from "rdf-terms";
 
 // Utility function to collect variables from algebra recursively
 const collectVariablesFromAlgebra = (operation: any): Set<string> => {
@@ -116,7 +66,7 @@ export function SPARQLQueryInterface({ credentials, onDerivedCredentialCreated }
 SELECT * WHERE {
   ?s ?p ?o .
 }`);
-  const [queryResults, setQueryResults] = useState<Record<string, { type: string; value: string }>[]>([]);
+  const [queryResults, setQueryResults] = useState<RDF.Bindings[]>([]);
   const [queryVariables, setQueryVariables] = useState<string[]>([]);
   const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set());
   const [constructResult, setConstructResult] = useState<string>('');
@@ -201,10 +151,21 @@ SELECT * WHERE {
     try {
       // Get selected bindings
       const selectedBindings = Array.from(selectedResults).map(index => queryResults[index]);
-      
-      // Execute CONSTRUCT query with selected bindings
-      const constructedRdf = await executeConstructQuery(query, selectedBindings, credentials);
-      setConstructResult(constructedRdf);
+
+      const algebra = translate(query);
+      if (algebra.type !== 'construct') {
+        throw new Error('Query is not a CONSTRUCT query');
+      }
+
+      const quads = selectedBindings.flatMap(binding => {
+        return algebra.template.map(quad => 
+          mapTermsNested(quad, (term) => 
+            term.termType === 'Variable' ? binding.get(term.value) || term : term
+          ) as RDF.Quad
+        );
+      });
+
+      setConstructResult(await write(quads));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'CONSTRUCT execution failed');
     } finally {
@@ -1445,7 +1406,7 @@ The corrected query should now work properly!`,
                         </td>
                       )}
                       {queryVariables.map((variable, cellIndex) => {
-                        const value = result[variable];
+                        const value = result.get(variable);
                         return (
                           <td
                             key={cellIndex}

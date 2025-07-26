@@ -23,6 +23,7 @@
     "n3": "^1.26.0",
     "next": "15.4.4",
     "rdf-string": "^2.0.1",
+    "rdf-string-ttl": "^2.0.1",
     "rdf-terms": "^2.0.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
