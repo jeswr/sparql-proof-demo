@@ -22,6 +22,89 @@ import { write as prettyTurtle } from '@jeswr/pretty-turtle';
 import * as RDF from "@rdfjs/types";
 import { everyTermsNested, forEachTermsNested } from "rdf-terms";
 
+// Utility function to extract WHERE clause from CONSTRUCT query
+const extractWhereClause = (constructQuery: string): string => {
+  try {
+    // Parse the CONSTRUCT query using sparqlalgebrajs
+    const algebra = translate(constructQuery);
+    
+    if (algebra.type !== 'construct') {
+      throw new Error('Query is not a CONSTRUCT query');
+    }
+    
+    // Convert the input algebra (WHERE clause) back to SPARQL
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const whereClause = toSparql((algebra as any).input);
+    
+    // Extract PREFIX declarations from the original query
+    const prefixMatches = constructQuery.match(/PREFIX\s+\w+:\s*<[^>]+>\s*/gi) || [];
+    const prefixes = prefixMatches.join('\n');
+    
+    // Construct the complete SELECT query with prefixes
+    const selectQuery = prefixes 
+      ? `${prefixes}\n\nSELECT * WHERE {\n${whereClause}\n}`
+      : `SELECT * WHERE {\n${whereClause}\n}`;
+    
+    console.log('Extracted SELECT query using sparqlalgebrajs:', selectQuery);
+    return selectQuery;
+    
+  } catch (error) {
+    console.error('Failed to extract WHERE clause using sparqlalgebrajs:', error);
+    
+    // Fallback to regex-based extraction if algebra conversion fails
+    try {
+      const prefixMatches = constructQuery.match(/PREFIX\s+\w+:\s*<[^>]+>\s*/gi) || [];
+      const prefixes = prefixMatches.join('\n');
+      
+      const whereMatch = constructQuery.match(/WHERE\s*\{([\s\S]*)\}$/i);
+      if (whereMatch) {
+        const whereBody = whereMatch[1].trim();
+        return prefixes 
+          ? `${prefixes}\n\nSELECT * WHERE {\n${whereBody}\n}`
+          : `SELECT * WHERE {\n${whereBody}\n}`;
+      }
+      
+      throw new Error('Could not extract WHERE clause from CONSTRUCT query');
+    } catch {
+      throw new Error(`Failed to parse CONSTRUCT query: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+};
+
+// Utility function to collect variables from algebra recursively
+const collectVariablesFromAlgebra = (operation: any): Set<string> => {
+  const variables = new Set<string>();
+  
+  const collectFromPatterns = (patterns: any[]) => {
+    patterns.forEach(pattern => {
+      if (pattern && pattern.type === 'pattern') {
+        // This is a triple/quad pattern
+        [pattern.subject, pattern.predicate, pattern.object].forEach(term => {
+          if (term && term.termType === 'Variable') {
+            variables.add(term.value);
+          }
+        });
+      }
+    });
+  };
+  
+  if (operation.type === 'bgp' && operation.patterns) {
+    collectFromPatterns(operation.patterns);
+  } else if (operation.type === 'construct') {
+    // Collect from template
+    if (operation.template) {
+      collectFromPatterns(operation.template);
+    }
+    // Collect from input (WHERE clause)
+    if (operation.input) {
+      const inputVars = collectVariablesFromAlgebra(operation.input);
+      inputVars.forEach(v => variables.add(v));
+    }
+  }
+  
+  return variables;
+};
+
 interface SPARQLQueryInterfaceProps {
   credentials: VerifiableCredential[];
   onDerivedCredentialCreated: (credential: VerifiableCredential) => void;
@@ -289,6 +372,7 @@ SELECT * WHERE {
       // Check if it's a CONSTRUCT query
       if (algebra.type === 'construct') {
         setIsConstructQuery(true);
+
         // Extract variables from the SELECT query
         const factory = new Factory();
 
@@ -304,8 +388,18 @@ SELECT * WHERE {
           });
         }
 
-        const selectAlgebra = factory.createProject(algebra.input, variables);
+        const selectQuery = toSparql(factory.createProject(algebra.input, variables));
         setQueryVariables(variables.map((variable) => variable.value));
+
+        // Convert the CONSTRUCT query to a SELECT query and execute it
+        try {
+          const results = await executeSPARQLQuery(selectQuery, credentials);
+          setQueryResults(results);
+          console.log('SELECT results for CONSTRUCT:', results);
+        } catch (selectError) {
+          console.error('Failed to execute SELECT query for CONSTRUCT:', selectError);
+          throw new Error(`Failed to get SELECT results for CONSTRUCT query: ${selectError instanceof Error ? selectError.message : 'Unknown error'}`);
+        }
 
         // Reset selections and construct result
         setSelectedResults(new Set());
