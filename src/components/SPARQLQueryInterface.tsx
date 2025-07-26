@@ -21,6 +21,29 @@ import { write as prettyTurtle, write } from '@jeswr/pretty-turtle';
 import * as RDF from "@rdfjs/types";
 import { everyTermsNested, forEachTermsNested, mapTermsNested } from "rdf-terms";
 
+// Define comprehensive prefix map for pretty-turtle formatting
+const SPARQL_PREFIXES = {
+  'cred': 'https://www.w3.org/2018/credentials#',
+  'credex': 'https://www.w3.org/2018/credentials/examples#',
+  'sec': 'https://w3id.org/security#',
+  'citizenship': 'https://w3id.org/citizenship#',
+  'vaccination': 'https://w3id.org/vaccination#',
+  'xsd': 'http://www.w3.org/2001/XMLSchema#',
+  'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+  'rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
+  'schema': 'http://schema.org/',
+  'foaf': 'http://xmlns.com/foaf/0.1/',
+  'dc': 'http://purl.org/dc/terms/',
+  'example': 'https://example.org/',
+  'exampleEdu': 'http://example.edu/',
+  'exampleCred': 'https://example.org/credentials/',
+  'exampleEx': 'https://example.org/examples#',
+  'health': 'https://healthauthority.example.org',
+  'did': 'did:example:',
+  'hl7': 'http://hl7.org/fhir/sid/',
+  'cvx': 'http://hl7.org/fhir/sid/cvx'
+};
+
 // Utility function to collect variables from algebra recursively
 const collectVariablesFromAlgebra = (operation: any): Set<string> => {
   const variables = new Set<string>();
@@ -213,10 +236,14 @@ SELECT * WHERE {
       });
 
       console.log('Constructing quads from selected bindings:', quads, availableBindings, selection);
-
-      const result = await write(quads);
-      console.log('CONSTRUCT result generated:', result.length, 'characters');
-      setConstructResult(result);
+      if (quads.length === 0) {
+        console.warn('No quads generated for CONSTRUCT query');
+        setConstructResult('');
+      } else {
+        const result = await write(quads, { prefixes: SPARQL_PREFIXES });
+        console.log('CONSTRUCT result generated:', result.length, 'characters');
+        setConstructResult(result);
+      }
     } catch (err) {
       console.error('CONSTRUCT execution failed:', err);
       setError(err instanceof Error ? err.message : 'CONSTRUCT execution failed');
@@ -318,32 +345,9 @@ SELECT * WHERE {
           
           console.log(`Total quads: ${allQuads.length}, Default graph quads: ${defaultGraphQuads.length}`);
           
-          // Define comprehensive prefix map
-          const prefixMap = {
-            'cred': 'https://www.w3.org/2018/credentials#',
-            'credex': 'https://www.w3.org/2018/credentials/examples#',
-            'sec': 'https://w3id.org/security#',
-            'citizenship': 'https://w3id.org/citizenship#',
-            'vaccination': 'https://w3id.org/vaccination#',
-            'xsd': 'http://www.w3.org/2001/XMLSchema#',
-            'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
-            'rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
-            'schema': 'http://schema.org/',
-            'foaf': 'http://xmlns.com/foaf/0.1/',
-            'dc': 'http://purl.org/dc/terms/',
-            'example': 'https://example.org/',
-            'exampleEdu': 'http://example.edu/',
-            'exampleCred': 'https://example.org/credentials/',
-            'exampleEx': 'https://example.org/examples#',
-            'health': 'https://healthauthority.example.org',
-            'did': 'did:example:',
-            'hl7': 'http://hl7.org/fhir/sid/',
-            'cvx': 'http://hl7.org/fhir/sid/cvx'
-          };
-          
           // Use pretty-turtle to format the output with only default graph quads
           const prettyTurtleOutput = await prettyTurtle(defaultGraphQuads, { 
-            prefixes: prefixMap
+            prefixes: SPARQL_PREFIXES
           });
           
           setRdfData(prettyTurtleOutput);
@@ -1494,7 +1498,7 @@ The corrected query should now work properly!`,
       )}
 
       {/* CONSTRUCT Result Display */}
-      {isConstructQuery && (
+      {isConstructQuery && (constructResult || isExecutingConstruct) && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2">
