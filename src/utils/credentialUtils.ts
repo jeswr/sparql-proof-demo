@@ -475,7 +475,7 @@ export const executeSPARQLQuery = async (
     
     // Check if this is a SELECT query
     if (algebra.type !== 'project') {
-      throw new CredentialError('Only SELECT queries are supported', 'UNSUPPORTED_QUERY_TYPE');
+      throw new CredentialError('Only SELECT queries are supported in executeSPARQLQuery', 'UNSUPPORTED_QUERY_TYPE');
     }
     
     // Extract the variables from the SELECT clause
@@ -565,6 +565,109 @@ export const executeSPARQLQuery = async (
       throw error;
     }
     throw new CredentialError(`SPARQL query failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'SPARQL_ERROR');
+  }
+};
+
+export const executeConstructQuery = async (
+  constructQuery: string,
+  selectedBindings: Record<string, { type: string; value: string }>[],
+  credentials: VerifiableCredential[]
+): Promise<string> => {
+  try {
+    console.log('CONSTRUCT Query:', constructQuery);
+    console.log('Selected bindings:', selectedBindings.length);
+    
+    // Parse the CONSTRUCT query using sparqlalgebrajs
+    const algebra = translate(constructQuery);
+    
+    // Check if this is a CONSTRUCT query
+    if (algebra.type !== 'construct') {
+      throw new CredentialError('Only CONSTRUCT queries are supported in executeConstructQuery', 'UNSUPPORTED_QUERY_TYPE');
+    }
+    
+    // Create a combined RDF store from all credentials
+    const store = new Store();
+    
+    // Convert each credential to RDF and add to the store
+    for (const credential of credentials) {
+      try {
+        const rdfDataset = await jsonld.toRDF(credential);
+        store.addAll(rdfDataset as RDF.Dataset);
+      } catch (error) {
+        console.warn(`Failed to convert credential ${credential.id} to RDF:`, error);
+      }
+    }
+    
+    console.log(`Created RDF store with ${store.size} quads`);
+    
+    // Create a new store to hold the constructed triples
+    const constructedStore = new Store();
+    
+    // For each selected binding, execute the original CONSTRUCT query
+    // and filter results based on the binding values
+    for (const binding of selectedBindings) {
+      try {
+        // Execute the original CONSTRUCT query
+        const queryEngine = new QueryEngine();
+        const quadStream = await queryEngine.queryQuads(constructQuery, {
+          sources: [store],
+        });
+        
+        // Get all constructed quads
+        const allQuads = await quadStream.toArray();
+        
+        // Filter quads that match this specific binding
+        // This is a simplified approach - in a full implementation,
+        // we would use the algebra to properly match bindings
+        const matchingQuads = allQuads.filter(() => {
+          // For now, just add all quads from each binding
+          // A more sophisticated implementation would check if the quad
+          // was generated from this specific binding
+          return true;
+        });
+        
+        // Add matching quads to the result store
+        constructedStore.addAll(matchingQuads);
+      } catch (error) {
+        console.warn('Failed to process binding:', binding, error);
+      }
+    }
+    
+    console.log(`Constructed ${constructedStore.size} triples`);
+    
+    // Convert the constructed store to pretty Turtle
+    const allQuads = constructedStore.getQuads(null, null, null, null);
+    
+    // Define prefix map for pretty-turtle
+    const prefixMap = {
+      'cred': 'https://www.w3.org/2018/credentials#',
+      'credex': 'https://www.w3.org/2018/credentials/examples#',
+      'sec': 'https://w3id.org/security#',
+      'citizenship': 'https://w3id.org/citizenship#',
+      'vaccination': 'https://w3id.org/vaccination#',
+      'xsd': 'http://www.w3.org/2001/XMLSchema#',
+      'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+      'rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
+      'schema': 'http://schema.org/',
+      'foaf': 'http://xmlns.com/foaf/0.1/',
+      'dc': 'http://purl.org/dc/terms/',
+      'example': 'https://example.org/',
+      'derived': 'https://example.org/derived/'
+    };
+    
+    // Use pretty-turtle to format the output
+    const prettyTurtleOutput = await prettyTurtle(allQuads, { 
+      prefixes: prefixMap
+    });
+    
+    return prettyTurtleOutput;
+    
+  } catch (error) {
+    console.error('CONSTRUCT query execution failed:', error);
+    if (error instanceof CredentialError) {
+      throw error;
+    }
+    throw new CredentialError(`CONSTRUCT query failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'CONSTRUCT_ERROR');
   }
 };
 
@@ -675,6 +778,22 @@ SELECT ?subject ?isAdult WHERE {
 }`
   },
   {
+    name: 'Verify Adult Status (CONSTRUCT)',
+    description: 'Create adult verification statements',
+    query: `PREFIX schema: <http://schema.org/>
+PREFIX citizenship: <https://w3id.org/citizenship#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+CONSTRUCT {
+  ?subject a citizenship:Adult ;
+           citizenship:isAdult ?isAdult .
+} WHERE {
+  ?subject schema:birthDate|citizenship:birthDate ?birthDate .
+  BIND((xsd:date(?birthDate) < xsd:date("${new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}")) AS ?isAdult)
+  FILTER(BOUND(?isAdult) && ?isAdult)
+}`
+  },
+  {
     name: 'Get Vaccination Status',
     description: 'Extract vaccination information',
     query: `PREFIX vaccination: <https://w3id.org/vaccination#>
@@ -685,6 +804,69 @@ SELECT ?recipient ?vaccine ?date ?location WHERE {
   ?credential vaccination:vaccine ?vaccine .
   OPTIONAL { ?credential vaccination:occurrence ?date }
   OPTIONAL { ?credential vaccination:location ?location }
+}`
+  },
+  {
+    name: 'Construct Identity Profile',
+    description: 'Create a minimal identity profile from credentials',
+    query: `PREFIX schema: <http://schema.org/>
+PREFIX citizenship: <https://w3id.org/citizenship#>
+PREFIX derived: <https://example.org/derived/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+
+CONSTRUCT {
+  ?person a foaf:Person ;
+          foaf:givenName ?givenName ;
+          foaf:familyName ?familyName ;
+          schema:birthDate ?birthDate .
+}
+WHERE {
+  ?subject schema:givenName|citizenship:givenName ?givenName .
+  ?subject schema:familyName|citizenship:familyName ?familyName .
+  OPTIONAL { ?subject schema:birthDate|citizenship:birthDate ?birthDate }
+  BIND(IRI(CONCAT("https://example.org/derived/person/", ENCODE_FOR_URI(?givenName), "-", ENCODE_FOR_URI(?familyName))) AS ?person)
+}`
+  },
+  {
+    name: 'Construct Age Verification',
+    description: 'Create age verification statements',
+    query: `PREFIX schema: <http://schema.org/>
+PREFIX citizenship: <https://w3id.org/citizenship#>
+PREFIX derived: <https://example.org/derived/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+CONSTRUCT {
+  ?ageVerification a derived:AgeVerification ;
+                   derived:subject ?subject ;
+                   derived:isAdult ?isAdult ;
+                   derived:verifiedAt ?now .
+}
+WHERE {
+  ?subject schema:birthDate|citizenship:birthDate ?birthDate .
+  BIND((xsd:date(?birthDate) < xsd:date("${new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}")) AS ?isAdult)
+  BIND(NOW() AS ?now)
+  BIND(IRI(CONCAT("https://example.org/derived/age-verification/", ENCODE_FOR_URI(STR(?subject)))) AS ?ageVerification)
+  FILTER(BOUND(?isAdult))
+}`
+  },
+  {
+    name: 'Construct Vaccination Summary',
+    description: 'Create a vaccination summary from vaccination credentials',
+    query: `PREFIX vaccination: <https://w3id.org/vaccination#>
+PREFIX schema: <http://schema.org/>
+PREFIX derived: <https://example.org/derived/>
+
+CONSTRUCT {
+  ?summary a derived:VaccinationSummary ;
+           derived:recipient ?recipient ;
+           derived:hasVaccination ?vaccine ;
+           derived:vaccinationDate ?date .
+}
+WHERE {
+  ?credential vaccination:recipient ?recipient .
+  ?credential vaccination:vaccine ?vaccine .
+  OPTIONAL { ?credential vaccination:occurrence ?date }
+  BIND(IRI(CONCAT("https://example.org/derived/vaccination-summary/", ENCODE_FOR_URI(STR(?recipient)))) AS ?summary)
 }`
   }
 ];

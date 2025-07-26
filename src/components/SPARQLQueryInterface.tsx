@@ -6,6 +6,7 @@ import Editor from '@monaco-editor/react';
 import { VerifiableCredential } from '@/types/credential';
 import { 
   executeSPARQLQuery, 
+  executeConstructQuery,
   createDerivedCredential, 
   getSampleSPARQLQueries
 } from '@/utils/credentialUtils';
@@ -14,10 +15,12 @@ import {
   validateLLMConfiguration,
   type ChatMessage 
 } from '@/utils/llmUtils';
-import { translate } from 'sparqlalgebrajs';
+import { translate, toSparql, Algebra, Factory } from 'sparqlalgebrajs';
 import * as jsonld from 'jsonld';
 import { Parser, Store } from 'n3';
 import { write as prettyTurtle } from '@jeswr/pretty-turtle';
+import * as RDF from "@rdfjs/types";
+import { everyTermsNested, forEachTermsNested } from "rdf-terms";
 
 interface SPARQLQueryInterfaceProps {
   credentials: VerifiableCredential[];
@@ -32,6 +35,9 @@ SELECT * WHERE {
 }`);
   const [queryResults, setQueryResults] = useState<Record<string, { type: string; value: string }>[]>([]);
   const [queryVariables, setQueryVariables] = useState<string[]>([]);
+  const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set());
+  const [constructResult, setConstructResult] = useState<string>('');
+  const [isConstructQuery, setIsConstructQuery] = useState(false);
   const [rdfData, setRdfData] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +67,7 @@ SELECT * WHERE {
     setLlmConfig(config);
   }, []);
 
-  // Filter sample queries to only show those that are valid SELECT queries and return results
+  // Filter sample queries to only show those that are valid SELECT or CONSTRUCT queries and return results (for SELECT)
   useEffect(() => {
     const filterSampleQueries = async () => {
       if (credentials.length === 0) {
@@ -74,10 +80,17 @@ SELECT * WHERE {
       
       for (const sampleQuery of allSampleQueries) {
         try {
-          // Test that the query can be parsed and returns results
-          const results = await executeSPARQLQuery(sampleQuery.query, credentials);
-          // If it doesn't throw an error and returns results, it's valid
-          if (results.length > 0) {
+          // Parse query to check if it's valid
+          const algebra = translate(sampleQuery.query);
+          
+          if (algebra.type === 'project') {
+            // For SELECT queries, test that they return results
+            const results = await executeSPARQLQuery(sampleQuery.query, credentials);
+            if (results.length > 0) {
+              validQueries.push(sampleQuery);
+            }
+          } else if (algebra.type === 'construct') {
+            // For CONSTRUCT queries, just check that they parse correctly
             validQueries.push(sampleQuery);
           }
         } catch (error) {
@@ -91,6 +104,50 @@ SELECT * WHERE {
 
     filterSampleQueries();
   }, [credentials]);
+
+  // Execute CONSTRUCT query with selected bindings
+  const executeConstruct = async () => {
+    if (!isConstructQuery || selectedResults.size === 0) {
+      setError('Please select at least one result to construct RDF');
+      return;
+    }
+
+    setIsExecuting(true);
+    setError(null);
+
+    try {
+      // Get selected bindings
+      const selectedBindings = Array.from(selectedResults).map(index => queryResults[index]);
+      
+      // Execute CONSTRUCT query with selected bindings
+      const constructedRdf = await executeConstructQuery(query, selectedBindings, credentials);
+      setConstructResult(constructedRdf);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'CONSTRUCT execution failed');
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  // Toggle result selection
+  const toggleResultSelection = (index: number) => {
+    const newSelection = new Set(selectedResults);
+    if (newSelection.has(index)) {
+      newSelection.delete(index);
+    } else {
+      newSelection.add(index);
+    }
+    setSelectedResults(newSelection);
+  };
+
+  // Select/deselect all results
+  const toggleSelectAll = () => {
+    if (selectedResults.size === queryResults.length) {
+      setSelectedResults(new Set());
+    } else {
+      setSelectedResults(new Set(queryResults.map((_, index) => index)));
+    }
+  };
 
   // Detect dark mode and update Monaco theme
   useEffect(() => {
@@ -228,16 +285,47 @@ SELECT * WHERE {
     try {
       // Extract variables from the query for consistent table headers
       const algebra = translate(query);
-      if (algebra.type === 'project') {
-        const selectVariables = (algebra as { variables: Array<{ value: string }> }).variables.map((variable) => variable.value);
-        setQueryVariables(selectVariables);
-      }
       
-      const results = await executeSPARQLQuery(query, credentials);
-      setQueryResults(results);
+      // Check if it's a CONSTRUCT query
+      if (algebra.type === 'construct') {
+        setIsConstructQuery(true);
+        // Extract variables from the SELECT query
+        const factory = new Factory();
+
+        const variables: RDF.Variable[] = [];
+        const varSet = new Set<string>();
+
+        for (const quad of algebra.template) {
+          forEachTermsNested(quad, (term) => {
+            if (term.termType === 'Variable' && !varSet.has(term.value)) {
+              variables.push(term as RDF.Variable);
+              varSet.add(term.value);
+            }
+          });
+        }
+
+        const selectAlgebra = factory.createProject(algebra.input, variables);
+        setQueryVariables(variables.map((variable) => variable.value));
+
+        // Reset selections and construct result
+        setSelectedResults(new Set());
+        setConstructResult('');
+      } else if (algebra.type === 'project') {
+        setIsConstructQuery(false);
+        const selectVariables = algebra.variables.map((variable) => variable.value);
+        setQueryVariables(selectVariables);
+        
+        const results = await executeSPARQLQuery(query, credentials);
+        setQueryResults(results);
+        setConstructResult('');
+      } else {
+        throw new Error('Only SELECT and CONSTRUCT queries are supported');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Query execution failed');
       setQueryVariables([]);
+      setIsConstructQuery(false);
+      setConstructResult('');
     } finally {
       setIsExecuting(false);
     }
@@ -247,6 +335,9 @@ SELECT * WHERE {
     setQuery(sampleQuery);
     setQueryResults([]);
     setQueryVariables([]);
+    setSelectedResults(new Set());
+    setConstructResult('');
+    setIsConstructQuery(false);
     setError(null);
   };
 
@@ -366,11 +457,11 @@ SELECT * WHERE {
       // Use sparqlalgebrajs to parse and validate the query
       const algebra = translate(queryText);
       
-      // Check if it's a SELECT query (we only support SELECT for now)
-      if (algebra.type !== 'project') {
+      // Check if it's a SELECT or CONSTRUCT query (we support both now)
+      if (algebra.type !== 'project' && algebra.type !== 'construct') {
         return {
           isValid: false,
-          error: 'Only SELECT queries are currently supported'
+          error: 'Only SELECT and CONSTRUCT queries are currently supported'
         };
       }
       
@@ -403,6 +494,7 @@ PREFIX vaccination: <https://w3id.org/vaccination#>
 PREFIX exampleEx: <https://example.org/examples#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 PREFIX sec: <https://w3id.org/security#>
+PREFIX derived: <https://example.org/derived/>
 
 SELECT ?name
 WHERE {
@@ -413,7 +505,10 @@ WHERE {
 **Common fixes:**
 - Added missing PREFIX declarations
 - Ensured proper SPARQL syntax
-- Used only SELECT queries (supported format)
+- Used SELECT or CONSTRUCT queries (supported formats)
+- Fixed variable bindings and syntax errors
+
+For CONSTRUCT queries, ensure the template and WHERE clauses are properly structured.
 
 The corrected query should now work properly!`,
         timestamp: new Date()
@@ -425,7 +520,7 @@ The corrected query should now work properly!`,
 
   const generateSuggestedPrompts = (): string[] => {
     // Generate dynamic prompts based on available credential types
-    const prompts = ['How do I write SPARQL queries?'];
+    const prompts = ['How do I write SPARQL queries?', 'How do CONSTRUCT queries work?'];
     
     // Check for specific credential types and add relevant prompts
     const hasVaccination = credentials.some(c => {
@@ -443,11 +538,12 @@ The corrected query should now work properly!`,
     
     if (hasNames) {
       prompts.push('Show me all names in my credentials');
+      prompts.push('Create a CONSTRUCT query for identity profiles');
     }
     
     if (hasVaccination) {
       prompts.push('Find vaccination records');
-      prompts.push('Show patient vaccination details');
+      prompts.push('Create a vaccination summary with CONSTRUCT');
     }
     
     if (hasDegree) {
@@ -457,13 +553,14 @@ The corrected query should now work properly!`,
     
     if (hasBirthDates) {
       prompts.push('Query birth dates for age verification');
+      prompts.push('Create age verification with CONSTRUCT');
     }
     
     // Add some general prompts
     prompts.push('Show all credential types');
     prompts.push('List all issuers');
     
-    return prompts.slice(0, 6); // Limit to 6 prompts
+    return prompts.slice(0, 8); // Limit to 8 prompts
   };
 
   const handleSuggestedPromptClick = async (prompt: string) => {
@@ -752,6 +849,13 @@ The corrected query should now work properly!`,
                             range: range
                           },
                           {
+                            label: 'CONSTRUCT',
+                            kind: monaco.languages.CompletionItemKind.Keyword,
+                            insertText: 'CONSTRUCT {\n  ?s ?p ?o .\n}\nWHERE {\n  ?s ?p ?o .\n}',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range: range
+                          },
+                          {
                             label: 'PREFIX',
                             kind: monaco.languages.CompletionItemKind.Keyword,
                             insertText: 'PREFIX prefix: <uri>',
@@ -776,6 +880,13 @@ The corrected query should now work properly!`,
                             kind: monaco.languages.CompletionItemKind.Module,
                             insertText: 'vaccination:',
                             detail: 'https://w3id.org/vaccination#',
+                            range: range
+                          },
+                          {
+                            label: 'derived:',
+                            kind: monaco.languages.CompletionItemKind.Module,
+                            insertText: 'derived:',
+                            detail: 'https://example.org/derived/',
                             range: range
                           }
                         ];
@@ -1205,6 +1316,16 @@ The corrected query should now work properly!`,
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
+                  {isConstructQuery && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      <input
+                        type="checkbox"
+                        checked={selectedResults.size === queryResults.length && queryResults.length > 0}
+                        onChange={toggleSelectAll}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </th>
+                  )}
                   {queryVariables.map(variable => (
                     <th
                       key={variable}
@@ -1218,7 +1339,17 @@ The corrected query should now work properly!`,
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {queryResults.length > 0 ? (
                   queryResults.map((result, index) => (
-                    <tr key={index}>
+                    <tr key={index} className={isConstructQuery && selectedResults.has(index) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}>
+                      {isConstructQuery && (
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={selectedResults.has(index)}
+                            onChange={() => toggleResultSelection(index)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                        </td>
+                      )}
                       {queryVariables.map((variable, cellIndex) => {
                         const value = result[variable];
                         return (
@@ -1241,7 +1372,7 @@ The corrected query should now work properly!`,
                 ) : (
                   <tr>
                     <td 
-                      colSpan={queryVariables.length} 
+                      colSpan={queryVariables.length + (isConstructQuery ? 1 : 0)} 
                       className="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400 italic"
                     >
                       No results found
@@ -1250,6 +1381,154 @@ The corrected query should now work properly!`,
                 )}
               </tbody>
             </table>
+          </div>
+          
+          {/* CONSTRUCT Controls */}
+          {isConstructQuery && queryResults.length > 0 && (
+            <div className="mt-4 flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+              <div className="text-sm text-blue-700 dark:text-blue-300">
+                <strong>{selectedResults.size}</strong> of <strong>{queryResults.length}</strong> results selected for CONSTRUCT
+              </div>
+              <button
+                onClick={executeConstruct}
+                disabled={isExecuting || selectedResults.size === 0}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+              >
+                <Play className="h-4 w-4" />
+                <span>{isExecuting ? 'Constructing...' : 'Execute CONSTRUCT'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CONSTRUCT Result Display */}
+      {isConstructQuery && constructResult && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-2">
+              <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                CONSTRUCT Result
+              </h3>
+            </div>
+            <button
+              onClick={() => copyToClipboard(constructResult)}
+              className="px-3 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 flex items-center space-x-1"
+            >
+              <Copy className="h-3 w-3" />
+              <span>Copy</span>
+            </button>
+          </div>
+          
+          <div className={`border rounded-md overflow-hidden ${
+            isDarkMode 
+              ? 'border-gray-600 bg-gray-700' 
+              : 'border-gray-300 bg-white'
+          }`}>
+            <Editor
+              height="400px"
+              language="turtle-custom"
+              theme={isDarkMode ? 'turtle-dark' : 'turtle-light'}
+              value={constructResult}
+              options={{
+                readOnly: true,
+                minimap: { enabled: false },
+                fontSize: 12,
+                lineNumbers: 'on',
+                roundedSelection: false,
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                tabSize: 2,
+                insertSpaces: true,
+                wordWrap: 'on',
+                lineHeight: 18,
+                fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace',
+                padding: { top: 10, bottom: 10 },
+                folding: true,
+                foldingHighlight: true,
+                showFoldingControls: 'mouseover',
+                renderLineHighlight: 'none',
+                selectOnLineNumbers: false,
+                smoothScrolling: true,
+                cursorStyle: 'line',
+                contextmenu: false,
+                quickSuggestions: false,
+                suggestOnTriggerCharacters: false,
+                acceptSuggestionOnCommitCharacter: false,
+                acceptSuggestionOnEnter: 'off'
+              }}
+              beforeMount={(monaco) => {
+                try {
+                  // Register Turtle language if not already registered
+                  if (!monaco.languages.getLanguages().some(lang => lang.id === 'turtle-custom')) {
+                    monaco.languages.register({ id: 'turtle-custom' });
+                    
+                    // Define Turtle/RDF syntax highlighting
+                    monaco.languages.setMonarchTokensProvider('turtle-custom', {
+                      prefixes: [
+                        '@prefix', '@base', 'PREFIX', 'BASE'
+                      ],
+                      tokenizer: {
+                        root: [
+                          [/\ba\b/, 'keyword'],
+                          [/[a-zA-Z]\w*:[a-zA-Z]\w*/, 'type'],
+                          [/<[^>]+>/, 'string'],
+                          [/"[^"]*"/, 'string'],
+                          [/'[^']*'/, 'string'],
+                          [/_:[a-zA-Z]\w*/, 'variable'],
+                          [/\d+/, 'number'],
+                          [/#.*/, 'comment'],
+                          [/[;,.]/, 'delimiter'],
+                          [/\^\^/, 'operator']
+                        ]
+                      }
+                    });
+
+                    // Define themes if not already defined
+                    if (!monaco.editor.getModel(monaco.Uri.parse('inmemory://turtle-light'))) {
+                      monaco.editor.defineTheme('turtle-light', {
+                        base: 'vs',
+                        inherit: true,
+                        rules: [
+                          { token: 'keyword', foreground: '0000FF', fontStyle: 'bold' },
+                          { token: 'type', foreground: '267F99' },
+                          { token: 'string', foreground: '008000' },
+                          { token: 'variable', foreground: '795E26' },
+                          { token: 'number', foreground: '098658' },
+                          { token: 'comment', foreground: '008000', fontStyle: 'italic' },
+                          { token: 'operator', foreground: '000000', fontStyle: 'bold' }
+                        ],
+                        colors: {
+                          'editor.background': '#ffffff',
+                          'editor.foreground': '#374151'
+                        }
+                      });
+
+                      monaco.editor.defineTheme('turtle-dark', {
+                        base: 'vs-dark',
+                        inherit: true,
+                        rules: [
+                          { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+                          { token: 'type', foreground: '4EC9B0' },
+                          { token: 'string', foreground: '6A9955' },
+                          { token: 'variable', foreground: 'DCDCAA' },
+                          { token: 'number', foreground: 'B5CEA8' },
+                          { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+                          { token: 'operator', foreground: 'D4D4D4', fontStyle: 'bold' }
+                        ],
+                        colors: {
+                          'editor.background': '#374151',
+                          'editor.foreground': '#f9fafb'
+                        }
+                      });
+                    }
+                  }
+                } catch (error) {
+                  console.warn('Failed to setup Turtle syntax highlighting for CONSTRUCT result:', error);
+                }
+              }}
+            />
           </div>
         </div>
       )}
