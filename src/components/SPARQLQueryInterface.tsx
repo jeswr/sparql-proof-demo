@@ -46,10 +46,10 @@ const SPARQL_PREFIXES = {
 };
 
 // Utility function to collect variables from algebra recursively
-const collectVariablesFromAlgebra = (operation: any): Set<string> => {
+const collectVariablesFromAlgebra = (operation: Algebra.Operation): Set<string> => {
   const variables = new Set<string>();
   
-  const collectFromPatterns = (patterns: any[]) => {
+  const collectFromPatterns = (patterns: Algebra.Pattern[]) => {
     patterns.forEach(pattern => {
       if (pattern && pattern.type === 'pattern') {
         // This is a triple/quad pattern
@@ -1796,7 +1796,7 @@ The corrected query should now work properly!`,
             <p className="text-sm text-blue-700 dark:text-blue-300">
               <strong>Note:</strong> Each credential will have:
               <br />• ID: did:example:derived:{'{rdf-c14n-hash}'}
-              <br />• Type: ["VerifiableCredential", "Derived", ...additional types]
+              <br />• Type: [&quot;VerifiableCredential&quot;, &quot;Derived&quot;, ...additional types]
               <br />• Issuer: did:example:derived
               <br />• Subject: Value from ?subject variable in your query
               <br />• Validity: Intersection of all source credential validity periods
