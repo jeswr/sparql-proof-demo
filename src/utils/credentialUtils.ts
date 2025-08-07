@@ -5,7 +5,7 @@ import { write as prettyTurtle } from '@jeswr/pretty-turtle';
 import { translate } from 'sparqlalgebrajs';
 import { QueryEngine } from '@comunica/query-sparql-rdfjs';
 import * as RDF from '@rdfjs/types';
-import { termToString } from 'rdf-string-ttl';
+
 import { canonize } from 'rdf-canonize';
 
 export class CredentialError extends Error {
@@ -678,7 +678,7 @@ export const createDerivedCredentialsFromConstruct = async (
     const subjectToBindings = new Map<string, RDF.Bindings>();
 
     // Build mappings from selected bindings
-    selectedBindings.forEach((bindings, index) => {
+    selectedBindings.forEach((bindings) => {
       const subjectTerm = bindings.get('subject');
       if (subjectTerm) {
         const subjectValue = subjectTerm.value;
@@ -747,8 +747,6 @@ export const createDerivedCredentialsFromConstruct = async (
     } else {
       // Create one credential per subject
       for (const [subjectValue, quads] of subjectToQuads) {
-        const bindings = subjectToBindings.get(subjectValue);
-        
         // Generate hash for this subject's data
         const datasetHash = await canonicalizeAndHash(quads);
         

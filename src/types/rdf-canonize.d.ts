@@ -7,12 +7,12 @@ declare module 'rdf-canonize' {
   }
 
   export function canonize(
-    input: any,
+    input: unknown,
     options?: CanonizeOptions
   ): Promise<string>;
 
   export function canonize(
-    input: any,
+    input: unknown,
     options: CanonizeOptions,
     callback: (err: Error | null, canonized?: string) => void
   ): void;

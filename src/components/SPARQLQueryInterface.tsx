@@ -6,7 +6,6 @@ import Editor from '@monaco-editor/react';
 import { VerifiableCredential } from '@/types/credential';
 import { 
   executeSPARQLQuery, 
-  createDerivedCredential, 
   createDerivedCredentialsFromConstruct,
   getSampleSPARQLQueries
 } from '@/utils/credentialUtils';
@@ -15,12 +14,12 @@ import {
   validateLLMConfiguration,
   type ChatMessage 
 } from '@/utils/llmUtils';
-import { translate, toSparql, Algebra, Factory } from 'sparqlalgebrajs';
+import { translate, toSparql, Factory } from 'sparqlalgebrajs';
 import * as jsonld from 'jsonld';
 import { Parser, Store } from 'n3';
 import { write as prettyTurtle, write } from '@jeswr/pretty-turtle';
 import * as RDF from "@rdfjs/types";
-import { everyTermsNested, forEachTermsNested, mapTermsNested } from "rdf-terms";
+import { forEachTermsNested, mapTermsNested } from "rdf-terms";
 
 // Define comprehensive prefix map for pretty-turtle formatting
 const SPARQL_PREFIXES = {
@@ -46,14 +45,16 @@ const SPARQL_PREFIXES = {
 };
 
 // Utility function to collect variables from algebra recursively
-const collectVariablesFromAlgebra = (operation: any): Set<string> => {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const collectVariablesFromAlgebra = (operation: { type: string; patterns?: unknown[]; template?: unknown[]; input?: unknown }): Set<string> => {
   const variables = new Set<string>();
   
-  const collectFromPatterns = (patterns: any[]) => {
+  const collectFromPatterns = (patterns: unknown[]) => {
     patterns.forEach(pattern => {
-      if (pattern && pattern.type === 'pattern') {
+      if (pattern && typeof pattern === 'object' && 'type' in pattern && pattern.type === 'pattern') {
         // This is a triple/quad pattern
-        [pattern.subject, pattern.predicate, pattern.object].forEach(term => {
+        const p = pattern as { subject?: RDF.Term; predicate?: RDF.Term; object?: RDF.Term };
+        [p.subject, p.predicate, p.object].forEach(term => {
           if (term && term.termType === 'Variable') {
             variables.add(term.value);
           }
@@ -71,7 +72,7 @@ const collectVariablesFromAlgebra = (operation: any): Set<string> => {
     }
     // Collect from input (WHERE clause)
     if (operation.input) {
-      const inputVars = collectVariablesFromAlgebra(operation.input);
+      const inputVars = collectVariablesFromAlgebra(operation.input as { type: string; patterns?: unknown[]; template?: unknown[]; input?: unknown });
       inputVars.forEach(v => variables.add(v));
     }
   }
@@ -524,47 +525,6 @@ SELECT * WHERE {
     setConstructQuads([]);
     setIsConstructQuery(false);
     setError(null);
-  };
-
-  const createDerived = async () => {
-    if (!derivedCredentialForm.id || !derivedCredentialForm.name) {
-      setError('Please fill in required fields for derived credential');
-      return;
-    }
-
-    if (queryResults.length === 0) {
-      setError('Please execute a query first to create a derived credential');
-      return;
-    }
-
-    setIsExecuting(true);
-    setError(null);
-
-    try {
-      const derivedCredential = await createDerivedCredential(
-        query,
-        credentials,
-        {
-          ...derivedCredentialForm,
-          id: derivedCredentialForm.id || `https://example.com/derived/${Date.now()}`,
-          type: [derivedCredentialForm.type]
-        }
-      );
-
-      onDerivedCredentialCreated(derivedCredential);
-      setShowCreateDerived(false);
-      setDerivedCredentialForm({
-        id: '',
-        type: 'DerivedCredential',
-        issuer: 'did:example:derived-issuer',
-        name: '',
-        description: ''
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create derived credential');
-    } finally {
-      setIsExecuting(false);
-    }
   };
 
   const copyToClipboard = async (text: string) => {
@@ -1796,7 +1756,7 @@ The corrected query should now work properly!`,
             <p className="text-sm text-blue-700 dark:text-blue-300">
               <strong>Note:</strong> Each credential will have:
               <br />• ID: did:example:derived:{'{rdf-c14n-hash}'}
-              <br />• Type: ["VerifiableCredential", "Derived", ...additional types]
+              <br />• Type: [&quot;VerifiableCredential&quot;, &quot;Derived&quot;, ...additional types]
               <br />• Issuer: did:example:derived
               <br />• Subject: Value from ?subject variable in your query
               <br />• Validity: Intersection of all source credential validity periods
