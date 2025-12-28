@@ -28,7 +28,7 @@
     "rdf-terms": "^2.0.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "react-syntax-highlighter": "^15.6.1",
+    "react-syntax-highlighter": "^16.1.0",
     "sparqlalgebrajs": "^5.0.1",
     "sparqljs": "^3.7.3"
   },
