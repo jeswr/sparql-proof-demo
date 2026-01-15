@@ -17,7 +17,7 @@
     "@types/n3": "^1.26.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "crypto-js": "^4.2.0",
-    "jsonld": "^8.3.3",
+    "jsonld": "^9.0.0",
     "lucide-react": "^0.525.0",
     "monaco-editor": "^0.52.2",
     "n3": "^1.26.0",
